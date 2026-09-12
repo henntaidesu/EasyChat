@@ -259,7 +259,9 @@ EasyChat.Desktop.MacOS
 
 预计：2～3 人日。
 
-**状态：进行中（2026-09-05）**
+**状态：已完成（2026-09-12）**
+
+两个遗留项已在后续阶段闭合：`Command+A` 映射见阶段 6.5 的 `MacTextDelivery`，`⌘` 显示见阶段 14 的 `KeyGlyphs`。
 
 这一阶段不是 macOS 功能实现，而是让共享层真正满足架构文档。
 
@@ -549,9 +551,9 @@ Windows 侧未改动，`WindowsPlatformCapabilities` 的无条件 `Available` �
 
 预计：3～5 人日。
 
-**状态：进行中（2026-09-12）**
+**状态：代码完成；5.3 待真机验收（2026-09-12）**
 
-已完成 5.1（Skia 配置）、5.2（窗口桥代码）与 5.4（开机启动）；5.3 主窗口真机行为需要先打出 `.app` 才能验收。
+5.1（Skia 配置）、5.2（窗口桥）、5.4（开机启动）均已落地；5.3 是主窗口的真机行为清单，`.app` 已能产出（阶段 15），可以开始验收。
 
 #### 5.1 Mac Program
 
@@ -656,9 +658,9 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 预计：5～7 人日。
 
-**状态：进行中（2026-09-12）**
+**状态：已完成（2026-09-12）**
 
-已完成 6.1～6.4；6.5 完成文本选择与写回，`MacSelectedTextCapture` 待阶段 7 的指针与键盘状态端口就位后补齐。
+6.1～6.5 全部落地。`MacSelectedTextCapture` 已随阶段 7 的指针与键盘状态端口一并完成。应用矩阵（Safari / Chrome / Word / VS Code 等）的真机验收属于阶段 8。
 
 #### 6.1 NSPasteboard
 
@@ -826,9 +828,9 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 预计：4～6 人日。
 
-**状态：进行中（2026-09-12）**
+**状态：已完成（2026-09-12），`WindowMoveStarted` 归入阶段 8**
 
-阶段 7 的四个适配器全部完成。`MacPointerPosition` 随阶段 9.1 的 `MacDisplayGeometry` 落地。
+四个适配器全部落地。`MacPointerPosition` 随阶段 9.1 的 `MacDisplayGeometry` 一并完成。
 
 #### 实现
 
@@ -920,11 +922,21 @@ macOS 会在 tap 太慢或用户强制关闭时把它禁用（`kCGEventTapDisabl
 
 预计：3～5 人日。
 
+**状态：接线已完成；任务 2～13 全部是真机验证项（2026-09-12）**
+
 这一阶段不新增 macOS 专用划词逻辑，只连接现有 Application 协调器。
+
+**接线部分已经完成**：`SelectionInteractionCoordinator` 是共享 Application 代码，它依赖的四个端口——`IGlobalPointerMonitor`（阶段 7）、`ISelectedTextCapture`（阶段 6.5）、`IWindowFocus`（阶段 6.4）、`IPlatformWindowBehavior`（阶段 5.2）——都已在 macOS 上注册，`--verify-composition` 里没有任何与划词相关的缺失端口。
+
+**其余任务全部需要真机操作才能判断**：拖动选择、双击选择、修饰键释放时机、工具栏位置与焦点、屏幕边缘调整、多显示器与负坐标，都要人在装好 `.app` 并授予辅助功能的机器上实际操作。自动化测试替代不了这一层，所以不标记完成。
+
+**`WindowMoveStarted` 归属本阶段**（阶段 7 已说明理由）：它的作用是防止「拖动窗口标题栏被误判为划词」，正确性只能在授予输入监视后于真机判断，做错了比没做更糟。实现方式已确定——在 mouse-down 记录鼠标下窗口的 bounds，mouse-up 再比一次，`CGWindowListCopyWindowInfo` 已经能提供 bounds。
+
+任务 12「黑白名单使用 bundle identifier」已由阶段 6.3 的 `MacRunningProcessCatalog` 满足；任务 13「EasyChat 自己的窗口不能触发外部划词」已由指针事件的 `PointerTargetIsOverlay`（比较 owner pid 与本进程）满足。
 
 #### 任务
 
-1. 接入 `SelectionInteractionCoordinator`。
+1. [x] 接入 `SelectionInteractionCoordinator`。
 2. 验证拖动选择和双击选择。
 3. 等待修饰键释放。
 4. 保存前台目标。
@@ -941,6 +953,8 @@ macOS 会在 tap 太慢或用户强制关闭时把它禁用（`kCGEventTapDisabl
 #### 阶段门槛
 
 Safari、Chrome、TextEdit、Word、VS Code 至少五类应用通过单击、拖选、双击和跨屏测试。
+
+**门槛状态：未达成，需真机验收。** 前置条件（`.app`、辅助功能授权）已具备。
 
 ### 阶段 9：截图和显示器坐标系统
 
@@ -1723,6 +1737,44 @@ macOS 集成测试包括：
   → 音频
   → 签名公证
 ```
+
+## 5.1 当前进度总览（2026-09-12）
+
+| 阶段 | 状态 |
+| --- | --- |
+| 0 基线 | 已完成 |
+| 1 架构文档与测试 | 已完成 |
+| 2 清除 Windows 语义泄漏 | 已完成 |
+| 3 平台项目与原生桥 | 已完成 |
+| 4 能力与权限 | 已完成 |
+| 5 Host、生命周期、窗口桥 | 代码完成；5.3 待真机验收 |
+| 6 剪贴板、枚举、焦点、写回 | 已完成 |
+| 7 快捷键、键盘状态、鼠标监听 | 已完成 |
+| 8 划词工具栏链路 | 接线完成；验收待真机 |
+| 9 截图与坐标 | 9.1/9.3 已完成；9.2 采集未经真机验证 |
+| 10 OCR | **阻塞**：runtime 实测不可用，路线待定 |
+| 11 图片文字清除 | **挂起**：与阶段 10 同因 |
+| 12 音频采集 | 12.1/12.4 内核完成；12.2/12.3 采集未实现 |
+| 13 播放、TTS、同传 | 已完成 |
+| 14 Presentation 适配 | 任务 1～2 完成；3～7 待真机 |
+| 15 打包签名公证更新 | 打包与本地签名完成；公证待证书；15.4 更新未实现 |
+| 16 CI 与门禁 | 测试门禁已启用；签名门禁待证书 |
+
+### 阻塞项与所需决策
+
+按「挡住了什么」排序：
+
+1. **OCR 路线（阻塞阶段 10、11）** —— 计划假设的 `Sdcb.OpenVINO.runtime.osx.12.6-arm64` 不含推理插件，OpenCvSharp 原生库亦缺失（实测见阶段 10）。三条路线各有代价，需要决策后才能动工。
+2. **屏幕录制授权（挡住 9.2 与 12.2 的验证）** —— 代码已写，但采集路径一次都没真机跑过。
+3. **Developer ID 证书与 Apple 账号（挡住公证、Gatekeeper、发布门禁）**。
+4. **真机验收（挡住 5.3、8、9.2、14.3～7）** —— 需要人在装好 `.app` 的机器上操作，自动化替代不了。
+5. **12.2/12.3 音频采集与 15.4 更新路径** —— 尚未实现，不依赖外部条件，可继续推进。
+
+### 本次会话遗留的技术债
+
+- `SubtitleSessionCoordinatorTests.FailedStructuredRetryRestoresAnExactSourceTranslationSnapshot` 偶发超时，去掉 `continue-on-error` 后会真的挡住 CI，需要单独 triage（Application 层，与本适配无关）。
+- 快捷键录制取 `e.Key`（布局映射）而热键按物理键码注册，非 US 布局可能不一致；Windows 侧同样存在，属跨平台既有行为。
+- `ScreenshotWorkerProtocol` 在两个 Host 各存一份，因为 Host 之间不允许互相引用。
 
 ## 6. 最终完成定义
 
