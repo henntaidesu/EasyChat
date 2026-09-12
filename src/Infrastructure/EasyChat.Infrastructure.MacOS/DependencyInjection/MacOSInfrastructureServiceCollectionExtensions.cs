@@ -25,6 +25,9 @@ public static class MacOSInfrastructureServiceCollectionExtensions
         services.AddSingleton<IClipboardSnapshots, MacClipboardSnapshots>();
         services.AddSingleton<IClipboardText, MacClipboardText>();
         services.AddSingleton<IClipboardImage, MacClipboardImage>();
+
+        services.AddSingleton<IWindowFocus, MacWindowFocus>();
+        services.AddSingleton<IRunningProcessCatalog, MacRunningProcessCatalog>();
         return services;
     }
 }

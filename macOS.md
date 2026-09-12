@@ -658,7 +658,7 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 **状态：进行中（2026-09-12）**
 
-已完成 6.1；6.2～6.5 未开始。
+已完成 6.1～6.4；6.5（文本选择和写回）未开始。
 
 #### 6.1 NSPasteboard
 
@@ -692,43 +692,67 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 #### 6.2 目标 Token
 
+**状态：已完成（2026-09-12）**
+
 `ExternalTargetToken` 内部编码建议包含进程 ID、AX element/window identity、生成代次或会话校验值。
 
 要求：
 
-- Token 不持久化。
-- 过期目标明确失败。
-- 非 Mac token 明确失败。
-- 不把编码格式暴露给 Application 或 Presentation。
+- [x] Token 不持久化。
+- [x] 过期目标明确失败。
+- [x] 非 Mac token 明确失败。
+- [x] 不把编码格式暴露给 Application 或 Presentation。
+
+实际编码：`mac:<session>:<pid>:<window>`，实现在 `Input/MacTargetTokens.cs`，`internal`，Application/Presentation 只做字符串传递与比较（与 Windows 的 `win32:<HWND hex>` 同一模式）。
+
+`session` 是**进程启动时生成一次的随机值**，这是「不持久化」的执行手段而非声明：跨进程留存的 token、或其他平台铸造的 token，解码时直接失败，不会落到「碰巧占用同一个 pid 的进程」上。`window` 目前恒为 0（表示「该应用的前台窗口」），字段保留给后续需要精确到窗口的场景。
 
 #### 6.3 应用枚举
 
+**状态：已完成（2026-09-12）**
+
 实现 `MacRunningProcessCatalog`：
 
-- 枚举可交互、拥有可见窗口的应用。
-- 稳定身份使用 bundle identifier。
-- 名称使用 localized application name。
-- 描述来自 bundle metadata。
-- 图标转成 PNG。
-- 过滤 EasyChat 自身和无 UI 后台进程。
-- 黑白名单仍只比较 Contracts 中的字符串身份。
+- [x] 枚举可交互、拥有可见窗口的应用。
+- [x] 稳定身份使用 bundle identifier。
+- [x] 名称使用 localized application name。
+- [x] 描述来自 bundle metadata（`CFBundleGetInfoString`，回退 `CFBundleShortVersionString`）。
+- [x] 图标转成 PNG（`NSRunningApplication.icon` → `TIFFRepresentation` → `NSBitmapImageRep` → PNG）。
+- [x] 过滤 EasyChat 自身和无 UI 后台进程。
+- [x] 黑白名单仍只比较 Contracts 中的字符串身份。
+
+两处需要明确的取舍：
+
+- 「拥有可见窗口」用 `NSApplicationActivationPolicyRegular` 近似。真正的「有可见窗口」要走 `CGWindowList`，而那需要屏幕录制授权——**为了填一个应用选择列表就索要屏幕录制是不能接受的**。Regular policy 即「有 Dock 图标、有界面」的应用集合，是不触发任何授权的最接近答案。
+- 同理，`WindowTitle` 恒为 `null`：读取窗口标题同样需要屏幕录制。契约允许为空，所以留空，而不是伪造一个。
+
+无 bundle identifier 的极少数应用回退到 localized name 作为身份，保证用户保存的黑白名单条目重启后仍能匹配。
 
 #### 6.4 窗口和焦点
 
+**状态：已完成（2026-09-12）**
+
 实现：
 
-- `MacWindowFocus`
-- `MacWindowInputTransparency`
+- [x] `MacWindowFocus`
+- [ ] `MacWindowInputTransparency` —— **不实现**，见下。
 
 能力：
 
-- 当前前台应用。
-- 当前 AX 聚焦元素。
-- 激活目标应用。
-- 恢复原目标。
-- 校验目标是否已退出。
-- 不激活浮窗。
-- 点击穿透。
+- [x] 当前前台应用（`NSWorkspace.frontmostApplication`）。
+- [x] 当前 AX 聚焦元素（`AXUIElementCreateSystemWide` → `AXFocusedApplication` → `AXUIElementGetPid`）。
+- [x] 激活目标应用（`NSRunningApplication.activateWithOptions:`，轮询确认已到前台）。
+- [x] 恢复原目标（同上，调用方持 token 回切）。
+- [x] 校验目标是否已退出（`isTerminated` / 查无此应用 → `window.target-exited`）。
+- [x] 不激活浮窗 / 点击穿透 —— 由阶段 5.2 的 `IPlatformWindowBehavior` 承担。
+
+关键差异：**macOS 没有 Win32 那种「按窗口」的前台概念，激活是按应用进行的**，所以 token 标识的是应用。
+
+`GetFocusedTargetAsync` 在缺少辅助功能授权时**返回失败而不是退回到 frontmost application**。这不是保守：前台应用和键盘焦点应用恰恰在有意义的时候才会不同（例如浮窗、输入法面板），用 frontmost 冒充 focused 会把文字写进错误的应用。
+
+`IWindowFocus.ConfigureNoActivateAsync` 在 macOS 上**明确返回失败**（`window.no-activate-unsupported`）：这个端口标识的是**别的应用**的目标，EasyChat 不去改别人窗口的样式；自己的浮窗走 5.2 的窗口行为端口。核查过 Application 与 Presentation 都不调用该方法，也不调用 `IWindowInputTransparency`（Presentation 统一走 `IPlatformWindowBehavior`），因此后者不注册也不实现，避免造一个没有调用方的适配器。
+
+真机验证：前台应用 token 能解码并反查到真实 bundle identifier；Finder 必然出现在枚举结果中；图标确实是 PNG；已退出目标返回 `window.target-exited` 而不是激活别的应用；外来平台 token 在任何原生调用之前就被拒绝。
 
 #### 6.5 文本选择和写回
 

@@ -37,6 +37,17 @@ internal static partial class ObjectiveCNative
         IntPtr first,
         IntPtr second);
 
+    /// <summary>
+    /// For a selector returning <c>int</c> rather than <c>NSInteger</c>, such as
+    /// <c>processIdentifier</c>. The upper half of the return register is unspecified for a 32-bit
+    /// result, so it must not be read as a pointer-sized value.
+    /// </summary>
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial int SendReturningInt32(IntPtr receiver, IntPtr selector);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial IntPtr SendReturningHandle(IntPtr receiver, IntPtr selector, int argument);
+
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
     internal static partial nint SendReturningNInt(IntPtr receiver, IntPtr selector);
 
@@ -97,6 +108,11 @@ internal static partial class ObjectiveCNative
     internal static string? ReadString(IntPtr text)
     {
         if (text == IntPtr.Zero)
+            return null;
+
+        // Info-dictionary and attribute reads can answer any object, and sending UTF8String to a
+        // non-string would crash rather than return null.
+        if (!Responds(text, "UTF8String"))
             return null;
 
         var utf8 = SendReturningHandle(text, GetSelector("UTF8String"));

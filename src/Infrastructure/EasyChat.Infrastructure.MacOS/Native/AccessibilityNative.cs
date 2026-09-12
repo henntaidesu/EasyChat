@@ -22,7 +22,53 @@ internal static partial class AccessibilityNative
     [return: MarshalAs(UnmanagedType.U1)]
     private static partial bool AXIsProcessTrustedWithOptions(IntPtr options);
 
+    /// <summary>Value of <c>kAXFocusedApplicationAttribute</c>.</summary>
+    internal const string FocusedApplicationAttribute = "AXFocusedApplication";
+
+    /// <summary>Value of <c>kAXFocusedUIElementAttribute</c>.</summary>
+    internal const string FocusedElementAttribute = "AXFocusedUIElement";
+
+    /// <summary>Value of <c>kAXErrorSuccess</c>.</summary>
+    internal const int Success = 0;
+
+    [LibraryImport(LibraryPath)]
+    internal static partial IntPtr AXUIElementCreateSystemWide();
+
+    [LibraryImport(LibraryPath)]
+    internal static partial IntPtr AXUIElementCreateApplication(int processIdentifier);
+
+    [LibraryImport(LibraryPath)]
+    internal static partial int AXUIElementCopyAttributeValue(
+        IntPtr element,
+        IntPtr attribute,
+        out IntPtr value);
+
+    [LibraryImport(LibraryPath)]
+    internal static partial int AXUIElementGetPid(IntPtr element, out int processIdentifier);
+
     internal static bool IsProcessTrusted() => AXIsProcessTrusted();
+
+    /// <summary>
+    /// Reads an attribute of an accessibility element. The caller owns the returned CoreFoundation
+    /// object and must release it.
+    /// </summary>
+    internal static IntPtr CopyAttribute(IntPtr element, string attribute)
+    {
+        if (element == IntPtr.Zero)
+            return IntPtr.Zero;
+
+        var name = CoreFoundationNative.CreateString(attribute);
+        try
+        {
+            return AXUIElementCopyAttributeValue(element, name, out var value) == Success
+                ? value
+                : IntPtr.Zero;
+        }
+        finally
+        {
+            CoreFoundationNative.CFRelease(name);
+        }
+    }
 
     /// <summary>
     /// Asks macOS to show the "open System Settings" prompt and reports the trust state observed at
