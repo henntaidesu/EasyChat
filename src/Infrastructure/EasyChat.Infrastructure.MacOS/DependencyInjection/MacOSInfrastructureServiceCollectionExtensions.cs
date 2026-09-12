@@ -1,4 +1,5 @@
 using EasyChat.Contracts.Platform;
+using EasyChat.Infrastructure.MacOS.ApplicationStartup;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace EasyChat.Infrastructure.MacOS.DependencyInjection;
@@ -14,6 +15,7 @@ public static class MacOSInfrastructureServiceCollectionExtensions
 
         services.AddSingleton<IPlatformCapabilities, MacPlatformCapabilities>();
         services.AddSingleton<IPlatformPermissionRequester, MacPlatformPermissionRequester>();
+        services.AddSingleton<IApplicationAutoStartService, MacApplicationAutoStartService>();
         return services;
     }
 }

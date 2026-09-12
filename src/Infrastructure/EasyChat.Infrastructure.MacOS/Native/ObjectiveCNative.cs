@@ -21,4 +21,27 @@ internal static partial class ObjectiveCNative
 
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
     internal static partial void Send(IntPtr receiver, IntPtr selector, IntPtr first, IntPtr second);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial IntPtr SendReturningHandle(IntPtr receiver, IntPtr selector);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendReturningNInt(IntPtr receiver, IntPtr selector);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool SendReturningBool(IntPtr receiver, IntPtr selector, IntPtr argument);
+
+    /// <summary>
+    /// Reads an <c>NSString</c> as managed text. The returned buffer is owned by the autorelease
+    /// pool, so it is copied immediately.
+    /// </summary>
+    internal static string? ReadString(IntPtr text)
+    {
+        if (text == IntPtr.Zero)
+            return null;
+
+        var utf8 = SendReturningHandle(text, GetSelector("UTF8String"));
+        return utf8 == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(utf8);
+    }
 }

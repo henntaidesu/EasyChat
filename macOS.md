@@ -549,6 +549,10 @@ Windows 侧未改动，`WindowsPlatformCapabilities` 的无条件 `Available` �
 
 预计：3～5 人日。
 
+**状态：进行中（2026-09-12）**
+
+已完成 5.1（Skia 配置）与 5.4（开机启动）；5.2 窗口桥和 5.3 主窗口真机行为仍未做。
+
 #### 5.1 Mac Program
 
 `Program.cs` 仅负责：
@@ -599,15 +603,34 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 实现 `MacApplicationAutoStartService`：
 
-- 使用 `SMAppService.mainApp`。
-- 读取真实注册状态。
-- 用户在系统设置中禁用后正确反映。
-- 不手工写 `LaunchAgents`。
-- 不增加后台守护进程。
+- [x] 使用 `SMAppService.mainApp`。
+- [x] 读取真实注册状态。
+- [x] 用户在系统设置中禁用后正确反映。
+- [x] 不手工写 `LaunchAgents`。
+- [x] 不增加后台守护进程。
+
+实现位置：`EasyChat.Infrastructure.MacOS/ApplicationStartup/MacApplicationAutoStartService.cs`，接缝 `IMacLoginItemGateway`（与阶段 4 的 `IMacPrivacyGateway` 同一模式：原生侧只报状态，映射策略留在适配器里以便测试）。
+
+`SMAppServiceStatus` 到契约的映射：
+
+| `SMAppServiceStatus` | `GetEnabled()` | `SetEnabled(true)` |
+| --- | --- | --- |
+| `enabled` | `true` | 成功 |
+| `notRegistered` | `false` | 失败 `autostart.register-not-effective` |
+| `requiresApproval` | `false` | 失败 `autostart.requires-approval`，提示前往「系统设置 > 通用 > 登录项与扩展」 |
+| `notFound` | 失败 `autostart.bundle-not-found` | 失败 `autostart.bundle-not-found` |
+
+`requiresApproval` 不当作已启用，理由是它确实不会在登录时启动。`SettingViewModel` 在 `SetEnabled` 失败时会弹出错误 toast 且**不翻转开关**，因此用户看到的是「需要去系统设置批准」，而不是一个假装打开的开关——符合规则 8「不允许假装成功」。
+
+每次写入后都重新读取状态再判定，`GetEnabled` 也不缓存，所以用户在系统设置里关掉登录项后下次读取就是 `false`。
+
+真机验证：`MacSystemLoginItemGatewayTests` 确认 `SMAppService` 类与 `mainAppService` 在加载 ServiceManagement 框架后真实解析（框架必须先 `NativeLibrary.Load` 才会向 Objective-C 运行时注册类，这一点决定了测试里的断言顺序）。测试只走读路径，不会在开发机上真的注册登录项。
 
 #### 阶段门槛
 
 主程序能以正确 `.app` 身份启动、关闭、隐藏、恢复、二次激活和开机启动。
+
+**门槛状态：未达成。** 5.1 的 Skia 配置已与 Windows 对齐（`MaxGpuResourceSizeBytes = 16 MiB`）；worker 参数分发暂不需要，因为 macOS 还没有 worker（阶段 9～11）。5.2 窗口桥与 5.3 的真机行为清单必须在打出 `.app` 之后才能验收，届时一并复核本门槛。
 
 ### 阶段 6：剪贴板、应用枚举、焦点和文本写回
 

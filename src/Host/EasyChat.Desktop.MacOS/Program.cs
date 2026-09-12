@@ -1,3 +1,4 @@
+using Avalonia;
 using EasyChat.Desktop.MacOS.DependencyInjection;
 using EasyChat.Desktop.MacOS.ApplicationLifecycle;
 using EasyChat.Infrastructure.MacOS.DependencyInjection;
@@ -16,6 +17,11 @@ internal static class Program
             {
                 services.AddEasyChatMacOSInfrastructure();
                 services.AddEasyChatMacOSDesktop();
-            });
+            },
+            configureAppBuilder: builder => builder
+                .With(new SkiaOptions
+                {
+                    MaxGpuResourceSizeBytes = 16L * 1024 * 1024
+                }));
     }
 }
