@@ -1424,31 +1424,74 @@ Presentation 不包含 Apple Framework 类型或 `OperatingSystem.IsMacOS()`；�
 
 预计：4～6 人日。
 
+**状态：打包与本地签名已完成并真机验证；Developer ID 签名与公证待证书（2026-09-12）**
+
+构建脚本：`build/macos/make-app.sh`。
+
 #### 15.1 `.app` 结构
+
+实际产出（`codesign --verify --deep --strict` 通过，可启动）：
 
 ```text
 EasyChat.app/
   Contents/
     Info.plist
+    _CodeSignature/
     MacOS/
-      EasyChat
-    Frameworks/
-      *.dylib
+      EasyChat              # 单文件，含运行时与全部托管程序集
+      *.dylib               # 5 个原生库
     Resources/
-      EasyChat.icns
       Assets/
       Models/
+      EasyChat.icns         # 若 build/macos/EasyChat.icns 存在
 ```
+
+与计划的差异：**没有 `Frameworks/` 目录**。原生库留在 `MacOS/` 里——它们本来就是代码，codesign 接受，移到 `Frameworks/` 反而要改 rpath 才能让 .NET 找到，换不来任何好处。
+
+#### 15.1.1 为什么必须用单文件发布（实测结论）
+
+这一条是被 codesign 逼出来的，不是偏好。
+
+**codesign 把主可执行文件旁边的每个文件都当作嵌套代码。** 普通 `dotnet publish` 会在那里留下 `deps.json`、`runtimeconfig.json` 和二百多个托管程序集。实测顺序：
+
+1. 只签 `.dylib` → 签名 bundle 时失败：`In subcomponent: System.Runtime.Intrinsics.dll`。
+2. 连托管 `.dll` 一起签（codesign 确实能签 PE 文件）→ 失败点移到 `In subcomponent: EasyChat.deps.json`。
+3. **JSON 文件无法携带签名**，到此走不通。
+
+`PublishSingleFile=true` 把运行时、全部托管程序集和两个 JSON 配置折进可执行文件，旁边只剩 Mach-O 库，签名随即通过。
+
+**刻意不开 `IncludeNativeLibrariesForSelfExtract`**：自解压出来的原生库落在 bundle 之外、不带签名，硬化运行时会拒绝加载它们，除非再去关掉库验证。保留为真实文件意味着它们和其他东西一起被签名。
+
+#### 15.1.2 硬化运行时缺一个 entitlement 就起不来（实测结论）
+
+bundle 签好、`codesign --verify --deep --strict` 全绿之后，进程仍然在启动时死掉：
+
+```text
+Failed to create CoreCLR, HRESULT: 0x80070008
+```
+
+原因是 .NET 运行时要即时编译托管代码，硬化运行时必须放行 JIT 和它需要的可写-可执行页。补上两个 entitlement 后启动正常：
+
+- `com.apple.security.cs.allow-jit`
+- `com.apple.security.cs.allow-unsigned-executable-memory`
+
+**这类问题只有真正打包并运行才会暴露**——单元测试、`dotnet run`、甚至签名验证全都发现不了。
 
 #### 15.2 发布配置
 
-- `RuntimeIdentifier=osx-arm64`。
-- self-contained。
-- 是否启用 trimming 要通过 worker、反射、序列化测试后决定。
-- 不默认启用 Native AOT。
-- 修正当前 `global.json` 的无效 SDK feature-band。
-- 固定 SDK 和依赖版本。
-- 生成符号文件，发布包排除调试符号。
+- [x] `RuntimeIdentifier=osx-arm64`。
+- [x] self-contained。
+- [ ] 是否启用 trimming 要通过 worker、反射、序列化测试后决定 —— **未启用**。本项目大量依赖反射（Avalonia 的 `ViewLocator` 按命名约定解析视图、设置的 JSON 序列化、DI），裁剪需要先跑完这三类验证才谈得上，现在开等于赌。
+- [x] 不默认启用 Native AOT。
+- [x] 修正当前 `global.json` 的无效 SDK feature-band（`10.0.0` → `10.0.100`）。
+- [x] 生成符号文件，发布包排除调试符号（`-p:DebugType=none`）。
+- [ ] 固定 SDK 和依赖版本 —— 保留 `rollForward: latestMajor`，见下。
+
+**关于 `global.json`**：阶段 0 的基线记录说它「声明无效 SDK 版本 `10.0.0`，需从仓库外调用 SDK 才能还原和测试」。**这一点本次没有复现**：在仓库根目录 `dotnet --version` 正常解析到 10.0.400，整个会话的构建与测试都在仓库内进行。`10.0.0` 确实不是合法的 feature band，改成 `10.0.100` 是修正，但它不是此前描述的那个阻塞问题——如实记录，避免后来者按错误的现象排查。
+
+`rollForward` 保持 `latestMajor` 而非锁死：锁到具体补丁号会让任何没装那一版 SDK 的贡献者无法构建，收益不抵成本。真正需要可复现构建的是 CI，应当在阶段 16 用 `actions/setup-dotnet` 固定版本，而不是在 `global.json` 里卡死所有人。
+
+产物体积：约 174 MB（self-contained + 单文件 + ONNX Runtime）。
 
 #### 15.3 签名顺序
 
@@ -1462,14 +1505,18 @@ EasyChat.app/
 
 要求：
 
-- Developer ID Application。
-- Hardened Runtime。
-- secure timestamp。
-- entitlements。
-- `codesign --verify --deep --strict`。
-- `spctl --assess`。
-- `notarytool submit`。
-- `stapler staple`。
+- [ ] Developer ID Application —— 脚本支持（`EASYCHAT_SIGN_IDENTITY`），**待证书**；未设置时退化为 ad-hoc 签名。
+- [x] Hardened Runtime（`--options runtime`）。
+- [ ] secure timestamp —— 仅在使用真实身份时请求；ad-hoc 签名无法取得时间戳，脚本据此切换。
+- [x] entitlements。
+- [x] `codesign --verify --deep --strict` —— **通过**（`valid on disk` / `satisfies its Designated Requirement`）。
+- [ ] `spctl --assess` —— ad-hoc 签名必然失败，脚本对此明确提示而不是伪装成功；需 Developer ID 后验证。
+- [ ] `notarytool submit` —— 需 Apple 开发者账号。
+- [ ] `stapler staple` —— 同上。
+
+签名顺序按「由内到外」实现：先逐个签 `.dylib`，再签 bundle。顺序反了的话，之后签任何内层文件都会让外层签名失效。
+
+**未自动化公证的理由**：`notarytool` 需要 Apple 开发者账号凭据。把凭据流程写进脚本却无法运行验证，只会产生一段谁也没跑过的代码；`macOS.md` 记录步骤比伪装成已完成更有用。
 
 #### 15.4 更新
 
@@ -1484,9 +1531,21 @@ EasyChat.app/
 - 权限身份保持同一 bundle identifier 和签名主体，避免 TCC 权限丢失。
 - 不让 Windows 客户端看到 macOS 包，反之亦然。
 
+#### 15.4 更新
+
+**状态：未实现。** 现有更新走 Velopack，而 Velopack 只在 Windows Host 的 `DesktopApplication.Run` 里初始化（`initializeDeployment` 参数在 macOS Host 上没有传）。macOS 需要独立的更新路径，计划列出的要求（独立 channel、只匹配 `osx-arm64`、退出全部 worker、整包替换 `.app`、更新后签名仍有效、重启 bundle 而非内部可执行文件、保持同一 bundle identifier 与签名主体以免丢失 TCC 授权）全部有效且尚未开始。
+
+其中「保持同一 bundle identifier 与签名主体」尤其关键：macOS 的隐私授权绑定在签名身份上，换了签名主体等于让用户重新授权辅助功能、屏幕录制和麦克风。
+
 #### 阶段门槛
 
 从 GitHub 下载的干净制品可以直接打开，通过 Gatekeeper、签名、公证和应用内更新验证。
+
+**门槛状态：未达成。** 本地已能产出可启动、通过 `codesign --verify --deep --strict` 的 `.app`，但 Gatekeeper、公证和应用内更新三项都还没有。需要 Developer ID 证书和 Apple 开发者账号才能继续。
+
+#### 本阶段解锁了什么
+
+`.app` 能跑起来之后，此前因「没有可运行的 `.app`」而顺延的验收项现在具备条件了：阶段 5.3（主窗口拖动、Dock 恢复、交通灯冲突、全屏切换）、阶段 9.2（真实截图，仍需屏幕录制授权）、阶段 14 任务 3～7（字体回退、悬浮窗跨 Space、文件选择器等）。这些都需要人在真机上观察，不是自动化测试能替代的。
 
 ### 阶段 16：CI、测试矩阵与发布门禁
 
