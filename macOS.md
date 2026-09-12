@@ -656,23 +656,39 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 预计：5～7 人日。
 
+**状态：进行中（2026-09-12）**
+
+已完成 6.1；6.2～6.5 未开始。
+
 #### 6.1 NSPasteboard
+
+**状态：已完成（2026-09-12）**
 
 实现：
 
-- `MacClipboardSnapshots`
-- `MacClipboardText`
-- `MacClipboardImage`
+- [x] `MacClipboardSnapshots`
+- [x] `MacClipboardText`
+- [x] `MacClipboardImage`
 
 要求：
 
-- 使用 `changeCount` 作为 change token。
-- 备份剪贴板全部可读取 UTI 类型。
-- 恢复时保留类型和二进制内容。
-- `RestoreIfUnchangedAsync` 只在 change token 匹配时恢复。
-- 图片写入必须匹配 `ImageFrame` BGRA 数据。
-- 延迟提供者或无法序列化类型要返回可诊断错误，不能静默丢失。
-- 剪贴板读写串行化，防止并发覆盖。
+- [x] 使用 `changeCount` 作为 change token。
+- [x] 备份剪贴板全部可读取 UTI 类型。
+- [x] 恢复时保留类型和二进制内容。
+- [x] `RestoreIfUnchangedAsync` 只在 change token 匹配时恢复。
+- [x] 图片写入必须匹配 `ImageFrame` BGRA 数据。
+- [x] 延迟提供者或无法序列化类型要返回可诊断错误，不能静默丢失。
+- [x] 剪贴板读写串行化，防止并发覆盖。
+
+落地要点：
+
+- **串行化**：三个端口共享同一个 `MacPasteboard` 单例，内部一把 `SemaphoreSlim`。这不是防御式加锁——6.5 的选区抓取会「写入临时值 → 读回 → 恢复」，若并发读插进中间，用户会拿到 EasyChat 的临时内容。
+- **全类型备份**：通过 `pasteboardItems` 遍历每个 item 的每个 UTI，逐个 `dataForType:` 取二进制。延迟提供者拒绝序列化时该类型返回 nil，`CaptureAsync` **直接失败**并列出这些 UTI（`clipboard.capture-incomplete`），而不是丢掉它们再假装恢复成功。
+- **条件恢复**：`RestoreIfUnchangedAsync` 在写入前重读 `changeCount`，不一致就跳过并返回成功——用户在此期间复制的新内容优先，这是「不覆盖用户并发写入」的基线要求。快照只能兑付一次，重复恢复是 no-op 而不是重复写。
+- **图片编码**：BGRA32 →`CGImageCreate`→ ImageIO 编码 PNG →`CFData`（与 `NSData` toll-free bridged）→`setData:forType:"public.png"`。全程 C 函数，没有 Objective-C 消息。位图标志用 `kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little`，即 32 位小端 ARGB，在内存中正是 B,G,R,A——与契约的 BGRA32 完全对应。非 BGRA32 的帧直接失败，不做静默转换。DPI 元数据暂未写入 PNG（契约未要求，粘贴目标一般也不读）。
+- **autorelease pool**：AppKit 返回的都是 autoreleased 对象，而 .NET 线程自带没有 pool。每个剪贴板操作用 `objc_autoreleasePoolPush/Pop` 包一层，否则临时对象会泄漏到进程结束。`generalPasteboard` 这类跨操作持有的单例则显式 `retain`。
+
+真机验证：`MacClipboardTests` 直接驱动真实的 general pasteboard（假实现验证不了任何 AppKit 管道），覆盖文本往返、change token 失效、快照恢复、条件恢复的两个分支（无人写入时恢复 / 用户已复制新内容时让路）、PNG 真实编码（校验 PNG magic），以及外来快照和外来 token 的拒绝。测试前用 `Capture()` 备份开发者自己的剪贴板、结束后 `Restore()` 放回，实测确认运行后剪贴板内容原样保留。
 
 #### 6.2 目标 Token
 

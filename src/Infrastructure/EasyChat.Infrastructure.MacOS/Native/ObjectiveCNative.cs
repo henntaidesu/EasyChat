@@ -3,9 +3,14 @@ using System.Runtime.InteropServices;
 namespace EasyChat.Infrastructure.MacOS.Native;
 
 /// <summary>
-/// Minimal Objective-C runtime surface for the few Apple capabilities that expose no C entry point.
-/// Every message send is declared with its exact signature; no dynamic dispatch helper is provided.
+/// Minimal Objective-C runtime surface for the Apple capabilities that expose no C entry point.
 /// </summary>
+/// <remarks>
+/// <c>objc_msgSend</c> has no single signature, so it is declared once per shape. The shapes are
+/// distinguished by argument count and return type only: on arm64 a pointer and an <c>NSInteger</c>
+/// occupy the same register, and <c>nint</c> is an alias of <see cref="IntPtr"/> in C#, so one
+/// declaration covers both. <c>BOOL</c> is the exception and keeps its own overload.
+/// </remarks>
 internal static partial class ObjectiveCNative
 {
     private const string LibraryPath = "/usr/lib/libobjc.A.dylib";
@@ -17,26 +22,44 @@ internal static partial class ObjectiveCNative
     internal static partial IntPtr GetSelector(string name);
 
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
-    internal static partial nint SendReturningNInt(IntPtr receiver, IntPtr selector, IntPtr argument);
-
-    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
-    internal static partial void Send(IntPtr receiver, IntPtr selector, IntPtr first, IntPtr second);
-
-    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
     internal static partial IntPtr SendReturningHandle(IntPtr receiver, IntPtr selector);
 
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial IntPtr SendReturningHandle(
+        IntPtr receiver,
+        IntPtr selector,
+        IntPtr argument);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial IntPtr SendReturningHandle(
+        IntPtr receiver,
+        IntPtr selector,
+        IntPtr first,
+        IntPtr second);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
     internal static partial nint SendReturningNInt(IntPtr receiver, IntPtr selector);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial nint SendReturningNInt(IntPtr receiver, IntPtr selector, IntPtr argument);
 
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
     [return: MarshalAs(UnmanagedType.U1)]
     internal static partial bool SendReturningBool(IntPtr receiver, IntPtr selector, IntPtr argument);
 
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool SendReturningBool(
+        IntPtr receiver,
+        IntPtr selector,
+        IntPtr first,
+        IntPtr second);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
     internal static partial void Send(IntPtr receiver, IntPtr selector);
 
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
-    internal static partial void Send(IntPtr receiver, IntPtr selector, nint argument);
+    internal static partial void Send(IntPtr receiver, IntPtr selector, IntPtr argument);
 
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
     internal static partial void Send(
@@ -44,13 +67,31 @@ internal static partial class ObjectiveCNative
         IntPtr selector,
         [MarshalAs(UnmanagedType.U1)] bool argument);
 
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial void Send(
+        IntPtr receiver,
+        IntPtr selector,
+        IntPtr first,
+        IntPtr second);
+
+    /// <summary>
+    /// Opens an autorelease pool. Objective-C APIs answer autoreleased objects and a .NET thread
+    /// carries no pool of its own, so a block of message sends that is not bracketed by one leaks
+    /// its temporaries for the lifetime of the process.
+    /// </summary>
+    [LibraryImport(LibraryPath, EntryPoint = "objc_autoreleasePoolPush")]
+    internal static partial IntPtr PushAutoreleasePool();
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_autoreleasePoolPop")]
+    internal static partial void PopAutoreleasePool(IntPtr pool);
+
     /// <summary>Answers whether the receiver implements <paramref name="selector"/>.</summary>
     internal static bool Responds(IntPtr receiver, string selector) =>
         receiver != IntPtr.Zero
         && SendReturningBool(receiver, GetSelector("respondsToSelector:"), GetSelector(selector));
 
     /// <summary>
-    /// Reads an <c>NSString</c> as managed text. The returned buffer is owned by the autorelease
+    /// Reads an <c>NSString</c> as managed text. The returned buffer belongs to the autorelease
     /// pool, so it is copied immediately.
     /// </summary>
     internal static string? ReadString(IntPtr text)

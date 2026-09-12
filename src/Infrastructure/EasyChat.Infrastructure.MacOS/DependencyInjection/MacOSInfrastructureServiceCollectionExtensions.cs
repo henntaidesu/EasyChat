@@ -18,6 +18,13 @@ public static class MacOSInfrastructureServiceCollectionExtensions
         services.AddSingleton<IPlatformPermissionRequester, MacPlatformPermissionRequester>();
         services.AddSingleton<IApplicationAutoStartService, MacApplicationAutoStartService>();
         services.AddSingleton<MacOwnedWindowBehavior>();
+
+        // One pasteboard instance is shared by all three clipboard ports so a capture, a temporary
+        // write and a restore can never interleave.
+        services.AddSingleton<MacPasteboard>();
+        services.AddSingleton<IClipboardSnapshots, MacClipboardSnapshots>();
+        services.AddSingleton<IClipboardText, MacClipboardText>();
+        services.AddSingleton<IClipboardImage, MacClipboardImage>();
         return services;
     }
 }
