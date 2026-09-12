@@ -2,6 +2,14 @@ using System.Runtime.InteropServices;
 
 namespace EasyChat.Infrastructure.MacOS.Native;
 
+/// <summary>Layout of <c>CFRange</c>.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct CoreFoundationRange
+{
+    internal nint Location;
+    internal nint Length;
+}
+
 /// <summary>
 /// Accessibility (TCC) trust checks. <see cref="IsProcessTrusted"/> never prompts;
 /// <see cref="PromptForTrust"/> is the only entry point allowed to surface a system dialog.
@@ -46,7 +54,76 @@ internal static partial class AccessibilityNative
     [LibraryImport(LibraryPath)]
     internal static partial int AXUIElementGetPid(IntPtr element, out int processIdentifier);
 
+    /// <summary>Value of <c>kAXSelectedTextRangeAttribute</c>.</summary>
+    internal const string SelectedTextRangeAttribute = "AXSelectedTextRange";
+
+    /// <summary>Value of <c>kAXSelectedTextAttribute</c>.</summary>
+    internal const string SelectedTextAttribute = "AXSelectedText";
+
+    /// <summary>Value of <c>kAXNumberOfCharactersAttribute</c>.</summary>
+    internal const string CharacterCountAttribute = "AXNumberOfCharacters";
+
+    /// <summary>Value of <c>kAXRoleAttribute</c>.</summary>
+    internal const string RoleAttribute = "AXRole";
+
+    /// <summary>Value of <c>kAXSecureTextFieldRole</c>: a password field.</summary>
+    internal const string SecureTextFieldRole = "AXSecureTextField";
+
+    /// <summary>Value of <c>kAXValueTypeCFRange</c>.</summary>
+    private const int CfRangeValueType = 4;
+
+    [LibraryImport(LibraryPath)]
+    internal static partial int AXUIElementSetAttributeValue(
+        IntPtr element,
+        IntPtr attribute,
+        IntPtr value);
+
+    [LibraryImport(LibraryPath)]
+    private static partial IntPtr AXValueCreate(int type, ref CoreFoundationRange value);
+
+    [LibraryImport(LibraryPath)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    private static partial bool AXValueGetValue(
+        IntPtr value,
+        int type,
+        out CoreFoundationRange range);
+
     internal static bool IsProcessTrusted() => AXIsProcessTrusted();
+
+    /// <summary>Writes an attribute; the caller still owns <paramref name="value"/>.</summary>
+    internal static bool SetAttribute(IntPtr element, string attribute, IntPtr value)
+    {
+        var name = CoreFoundationNative.CreateString(attribute);
+        try
+        {
+            return AXUIElementSetAttributeValue(element, name, value) == Success;
+        }
+        finally
+        {
+            CoreFoundationNative.CFRelease(name);
+        }
+    }
+
+    internal static bool TryReadRange(IntPtr element, string attribute, out CoreFoundationRange range)
+    {
+        range = default;
+        var value = CopyAttribute(element, attribute);
+        if (value == IntPtr.Zero)
+            return false;
+
+        try
+        {
+            return AXValueGetValue(value, CfRangeValueType, out range);
+        }
+        finally
+        {
+            CoreFoundationNative.CFRelease(value);
+        }
+    }
+
+    /// <summary>Creates an <c>AXValue</c> holding a range; the caller must release it.</summary>
+    internal static IntPtr CreateRange(CoreFoundationRange range) =>
+        AXValueCreate(CfRangeValueType, ref range);
 
     /// <summary>
     /// Reads an attribute of an accessibility element. The caller owns the returned CoreFoundation

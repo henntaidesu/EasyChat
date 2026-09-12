@@ -318,7 +318,7 @@ enum StandardTextCommand
 
 - [x] Application 发送 `StandardTextCommand.SelectAll` 和 `StandardTextCommand.Delete`。
 - [x] Windows 适配为 `Ctrl+A` 和 Windows 对应命令。
-- [ ] macOS 适配为 `Command+A` 和 macOS 对应命令（阶段 6 的文本投递适配器）。
+- [x] macOS 适配为 `Command+A` 和 macOS 对应命令（`MacTextDelivery` / `MacKeyCombination.ForCommand`，2026-09-12 完成）。
 - [x] 用户自定义前置键/后置键仍使用 `ShortcutGesture` 语义。
 - [x] 旧设置中的 `Win` 和 `Windows` 作为 `Meta` 的持久化兼容别名读取，并有测试覆盖。
 - [x] 新录制设置统一保存 `Meta`。
@@ -658,7 +658,7 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 **状态：进行中（2026-09-12）**
 
-已完成 6.1～6.4；6.5（文本选择和写回）未开始。
+已完成 6.1～6.4；6.5 完成文本选择与写回，`MacSelectedTextCapture` 待阶段 7 的指针与键盘状态端口就位后补齐。
 
 #### 6.1 NSPasteboard
 
@@ -756,25 +756,39 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 #### 6.5 文本选择和写回
 
+**状态：部分完成（2026-09-12）**
+
 实现：
 
-- `MacTextSelection`
-- `MacTextDelivery`
-- `MacSelectedTextCapture`
-
-选择读取顺序：
-
-1. Accessibility 直接读取 selected text。
-2. AX selected text range。
-3. `Command+C` + NSPasteboard。
-4. 按 change token 安全恢复剪贴板。
+- [x] `MacTextSelection`
+- [x] `MacTextDelivery`
+- [ ] `MacSelectedTextCapture` —— 依赖 `IPointerPosition` 与 `IKeyboardState`（阶段 7），推迟到阶段 7 一并完成。
 
 写回模式：
 
-- `Type`：CGEvent Unicode 输入。
-- `Paste`：临时剪贴板 + `Command+V` + 恢复。
-- `Message`：优先通过 AX 设置选区/值；目标不支持时返回明确失败，不假装成功。
-- 标准命令通过 `StandardTextCommand` 映射。
+- [x] `Type`：`CGEventKeyboardSetUnicodeString` 逐字符输入，按 rune 而非 UTF-16 code unit 迭代，避免把代理对拆开；换行走 `kVK_Return`。
+- [x] `Paste`：快照剪贴板 → 写入译文 → `Command+V` → 恢复。粘贴后有 200 ms 落地延迟，否则剪贴板先被恢复，目标读到的是旧内容而不是译文。
+- [x] `Message`：通过 AX 设置 `AXSelectedText`。元素不支持该属性时返回 `text-delivery.message-unsupported`，**不假装成功**。
+- [x] 标准命令通过 `StandardTextCommand` 映射（见下）。
+
+`StandardTextCommand` 的 macOS 映射：
+
+| 命令 | macOS | 说明 |
+| --- | --- | --- |
+| `SelectAll` | `Command + A` | 完成阶段 2 遗留项 |
+| `Copy` | `Command + C` | |
+| `Paste` | `Command + V` | |
+| `Delete` | `Backspace`（`kVK_Delete` = 51） | **不用 forward delete**：Backspace 在所有 macOS 文本控件里都会删除当前选区，而且每块 Mac 键盘上都有；forward delete 两条都不成立 |
+
+`MacKeyCombination` 复用 Windows 的快捷键词汇（`Ctrl` / `Alt` / `Shift` / `Win` / `Windows` / `Meta`），其中 `Meta` 及其旧设置别名 `Win`、`Windows` 一律映射到 Command。键码用的是 HIToolbox 的 ANSI **位置**而非字符，因此录制为「A」的快捷键在 AZERTY 布局下仍然工作。
+
+`MacTextSelection` 直接设置 AX 选区而不是发 `Command+A`，因为它能**读回实际生效的选区**——调用方正是靠这个区分「真的全选了」和「控件忽略了请求」。无焦点文本元素（包括未授予辅助功能）时返回 `HasFocusedControl=false`，调用方据此回退到按键命令，与 Windows 上遇到非编辑控件的行为一致。
+
+**密码框**：`Message` 模式在写入前检查 AX role，`AXSecureTextField` 直接返回 `text-delivery.secure-field`。必须说明的是，`Type` 和 `Paste` 模式**做不到这个检查**——CGEvent 投递出去时不携带目的地，macOS 不告诉你谁会收到。这正是「读取侧必须拒绝密码框」的原因，该守卫随 `MacSelectedTextCapture` 一起落地。
+
+**授权前提**：合成事件需要辅助功能授权，未授权时 macOS **静默丢弃**事件且不报错。因此调用方必须先查 capability（阶段 4 已经做到），不能把「post 成功」当作「按键送达」。
+
+测试策略：**不注入任何真实按键，也不在任何应用里改动选区**——那样会打到开发者当时正在用的窗口里。可测的部分（命令映射、快捷键词汇、非法组合、未知模式、无焦点元素）全部覆盖；当测试宿主碰巧持有辅助功能授权时，涉及 AX 的用例标记 Inconclusive 而不是去动前台应用。真实按键注入的验收放到阶段 8 的划词工具栏链路和「重点兼容应用」矩阵。
 
 #### 重点兼容应用
 

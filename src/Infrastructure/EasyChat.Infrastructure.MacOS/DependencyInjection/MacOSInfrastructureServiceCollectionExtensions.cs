@@ -28,6 +28,8 @@ public static class MacOSInfrastructureServiceCollectionExtensions
 
         services.AddSingleton<IWindowFocus, MacWindowFocus>();
         services.AddSingleton<IRunningProcessCatalog, MacRunningProcessCatalog>();
+        services.AddSingleton<ITextSelection, MacTextSelection>();
+        services.AddSingleton<ITextDelivery, MacTextDelivery>();
         return services;
     }
 }

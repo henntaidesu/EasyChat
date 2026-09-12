@@ -50,6 +50,20 @@ internal static partial class CoreFoundationNative
     [LibraryImport(LibraryPath)]
     internal static partial IntPtr CFDataGetBytePtr(IntPtr data);
 
+    /// <summary>Value of <c>kCFNumberNSIntegerType</c>.</summary>
+    private const int NSIntegerType = 15;
+
+    [LibraryImport(LibraryPath)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    private static partial bool CFNumberGetValue(IntPtr number, int type, out nint value);
+
+    /// <summary>Reads a <c>CFNumber</c>, answering false for any other kind of object.</summary>
+    internal static bool TryReadInt(IntPtr number, out nint value)
+    {
+        value = 0;
+        return number != IntPtr.Zero && CFNumberGetValue(number, NSIntegerType, out value);
+    }
+
     internal static IntPtr CreateString(string value) =>
         CFStringCreateWithCString(IntPtr.Zero, value, Utf8Encoding);
 
