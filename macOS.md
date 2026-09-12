@@ -1233,10 +1233,38 @@ ONNX Runtime native OK. providers: [CoreMLExecutionProvider, WebGpuExecutionProv
 #### 本阶段进度（2026-09-12）
 
 - [x] 12.1 音频源目录与 token（`MacAudioCaptureSourceCatalog`、`MacAudioSourceTokens`）——真机验证。
-- [ ] 12.2 系统与应用音频（ScreenCaptureKit）——未实现，需屏幕录制授权才能验证，与 9.2 同一限制。
-- [ ] 12.3 麦克风采集（AVFoundation/CoreAudio）——未实现，设备枚举已完成，实际取样需麦克风授权。
-- [x] 12.4 的**格式转换与混音内核**（`PcmAudioConversion`）——纯托管、逐样本验证。多源缓冲与有界 Channel 编排随 12.2/12.3 落地。
+- [ ] 12.2 系统与应用音频（ScreenCaptureKit）——**采集未实现**，所需的运行时 delegate 机制已构建并独立验证，见下。
+- [ ] 12.3 麦克风采集（AVFoundation/CoreAudio）——**采集未实现**，设备枚举已完成。
+- [x] 12.4 编排与格式转换（`MacPcmAudioCapture`、`PcmAudioConversion`）——纯托管、完整测试。
 - [x] 12.5 复用 MicroASR——无需任何 macOS 适配（见上）。
+
+#### 12.4 编排：为什么先做这一层
+
+多源缓冲、成帧、混音、关闭时序是这条链路里**并发错误真正发生的地方**，而它们一个都不需要麦克风才能触发。因此 `MacPcmAudioCapture` 把采集抽到 `IMacAudioSourceFactory` / `IMacAudioSourceStream` 之后，编排本身用脚本化的假音源完整测试：
+
+- 输出恒为整帧（16 kHz 单声道 16 位、20 ms = 640 字节）。
+- **不能整除帧长的块结转到下一块**，而不是补零或丢弃——补零会插入爆音，丢弃会导致漂移。
+- 尾部不足一帧的数据不作为短帧发出。
+- 两个源求和成一路。
+- 某个源提前结束不影响其余源继续产出。
+- 某个源失败时**结束整条采集**而不是转为静音——工作流才能据此报错，而不是看起来在听一段没有声音的输入。
+- 非本平台签发的 token 被忽略且**根本不会到达平台层**。
+- 取消及时返回，且**每个已打开的源都被关闭**。
+- 预热打开后立即关闭，不把设备留着；预热失败只记日志不阻止启动。
+
+缓冲是**有界且丢弃最旧**的：识别跟不上时有用的是最新的语音，让缓冲无限增长等于把固定延迟换成无限延迟，最终换成进程内存。
+
+#### 12.2/12.3 未实现的部分与已扫清的障碍
+
+ScreenCaptureKit 的音频输出**只通过 delegate 协议投递，没有 block 版本**，这意味着必须存在一个真正的 Objective-C 类来接收回调。这是此前最大的未知。
+
+该机制现已构建并**独立验证**：`ObjectiveCClassBuilder` 在运行时用 `objc_allocateClassPair` / `class_addMethod` / `objc_registerClassPair` 定义类，方法实现是导出为函数指针的托管静态函数。测试创建一个带 `v@:@q` 编码方法的类、实例化、发消息，断言回调触发**且两个参数原样到达**——类型编码写错会破坏调用栈而不是干净失败，所以必须断言参数而不只是断言方法跑了。该测试不需要任何授权。
+
+剩下的是把这套机制接到 `SCStream` / `SCStreamConfiguration`（音频部分）和麦克风采集上。两者都需要相应授权才能真机验证，与 9.2 同一限制。
+
+关于麦克风路径的一点判断：`AudioQueueNewInput` 是**纯 C API**，回调是普通函数指针，比 `AVCaptureSession` 的 delegate 协议简单得多，应优先考虑。
+
+**`IPcmAudioCapture` 目前仍未注册**：注册它只会把 `--verify-composition` 的缺失项从 `IPcmAudioCapture` 换成内部的 `IMacAudioSourceFactory`，既没有改善也更难读。等采集落地后一并注册。
 
 **源目录不需要任何授权**：设备枚举、设备名、通道布局对任何进程开放，只有真正取样才受限。应用列表复用与划词选择器同一套 workspace 查询。因此源选择器在 EasyChat 向用户要任何权限之前就能填好。
 
