@@ -1140,9 +1140,11 @@ OpenCvSharp native FAILED: TypeInitializationException
 | --- | --- | --- |
 | A. Apple Vision（`VNRecognizeTextRequest`） | 无需模型下载、无原生打包签名负担、Apple Silicon 上速度好 | 语言范围从约 90 种缩到 Vision 支持的约 20 种；模型下载/删除设置页在 macOS 上失去意义；结果语义不同（归一化包围盒，旋转角表达方式不一致） |
 | B. 自行构建 OpenVINO ARM CPU 插件 + OpenCvSharp 原生库 | 模型 ID、语言 ID、下载校验和、结果语义**全部不变** | 需要从源码构建 OpenVINO 与 OpenCV 的 macOS arm64 版本，自行 vendoring、改 rpath、签名公证，并长期维护这套构建 |
-| C. 换用 ONNX Runtime 推理 | 语言范围与结果语义可保留；仓库已依赖 `Microsoft.ML.OnnxRuntime`（MicroASR 在用），macOS arm64 支持完善 | PaddleOCR 模型需转换为 ONNX，**下载目录与校验和必须改**，与计划「下载校验和保持兼容」冲突 |
+| C. 换用 ONNX Runtime 推理 | 语言范围与结果语义可保留；仓库已依赖 `Microsoft.ML.OnnxRuntime`（MicroASR 在用），**实测 macOS arm64 可用且带 CoreML 执行提供程序**（见阶段 12） | PaddleOCR 模型需转换为 ONNX，**下载目录与校验和必须改**，与计划「下载校验和保持兼容」冲突 |
 
-在这条路线确定之前，阶段 10 不应继续写实现代码。
+**决策（2026-09-12，用户）：暂缓 OCR，先推进其他阶段。** 阶段 10 挂起；阶段 11（图片文字清除）同样依赖 OpenCvSharp 原生库，因此一并挂起。上表三条路线保留待定，选定前不写实现代码。
+
+被挂起的两个阶段对应的未注册端口：`IOcrRecognizer`、`IOcrModelStore`、`IImageBackgroundCleaner`、`IImageTranslationModelStore`。
 
 #### 测试
 
@@ -1164,6 +1166,8 @@ OpenCvSharp native FAILED: TypeInitializationException
 当前 OCR 语言目录和功能入口在 macOS 上保持一致，连续识别无持续内存增长。
 
 ### 阶段 11：图片文字清除和图片翻译
+
+**状态：挂起（2026-09-12）。** 与阶段 10 同一个原因：`Sdcb.OpenVINO.PaddleOCR` 与图片清除都依赖 OpenCvSharp 原生库，而 macOS arm64 上没有可用的 `libOpenCvSharpExtern.dylib`（实测见阶段 10）。OCR 路线选定后一并处理。
 
 预计：3～5 人日。
 
@@ -1199,6 +1203,18 @@ OpenCvSharp native FAILED: TypeInitializationException
 Fast/Precise 两种模式的输出、取消、模型缺失和 worker 恢复行为与 Windows 一致。
 
 ### 阶段 12：音频源、PCM 采集和语音识别
+
+#### 前置实测：ONNX Runtime 在 macOS arm64 上可用（2026-09-12）
+
+语音识别走的是平台无关的 MicroASR（`Microsoft.ML.OnnxRuntime 1.28.0`，位于共享 Infrastructure），因此它能否在 macOS 上跑是本阶段的决定性前提。实测结果：
+
+```text
+ONNX Runtime native OK. providers: [CoreMLExecutionProvider, WebGpuExecutionProvider, CPUExecutionProvider]
+```
+
+与阶段 10 的 OpenVINO 形成鲜明对比：ONNX Runtime 的 macOS arm64 原生库**完整**，且带 CoreML 执行提供程序。识别这一半不需要任何 macOS 专有适配，只需接上 PCM 采集。
+
+因此本阶段的实际工作量集中在**采集侧**（系统音频、应用音频、麦克风），而不是识别侧。
 
 预计：7～10 人日，是最高风险阶段。
 
