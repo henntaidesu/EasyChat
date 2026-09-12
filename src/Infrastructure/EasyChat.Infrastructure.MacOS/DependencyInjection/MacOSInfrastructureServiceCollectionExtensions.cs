@@ -37,6 +37,8 @@ public static class MacOSInfrastructureServiceCollectionExtensions
         services.AddSingleton<IKeyboardState, MacKeyboardState>();
         services.AddSingleton<IPointerPosition, MacPointerPosition>();
         services.AddSingleton<IScreenCatalog, MacScreenCatalog>();
+        services.AddSingleton<IGlobalPointerMonitor, MacGlobalPointerMonitor>();
+        services.AddSingleton<ISelectedTextCapture, MacSelectedTextCapture>();
         return services;
     }
 }

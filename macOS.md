@@ -762,7 +762,20 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 - [x] `MacTextSelection`
 - [x] `MacTextDelivery`
-- [ ] `MacSelectedTextCapture` —— 依赖 `IPointerPosition` 与 `IKeyboardState`（阶段 7），推迟到阶段 7 一并完成。
+- [x] `MacSelectedTextCapture`（2026-09-12 完成，随阶段 7 的指针与键盘状态端口一并落地）
+
+选择读取顺序：
+
+1. [x] Accessibility 直接读取 selected text（`AXSelectedText`）——**优先这条是因为它什么都不动**：不注入按键、不写剪贴板、用户察觉不到。
+2. [x] AX selected text range —— 由 `MacTextSelection` 在 `CaptureAll` 时负责。
+3. [x] `Command+C` + NSPasteboard，仅在 AX 失败时走。
+4. [x] 按 change token 安全恢复剪贴板。
+
+判定「复制完成」用的是 **`changeCount` 变化**而不是「剪贴板非空」：用户很可能本来剪贴板里就有同一段文字，靠内容判断会误判。
+
+`selection.keyboard-busy`：用户还按着自己的修饰键时注入 Command+C 会组合出谁也没要的按键，所以直接让路。
+
+**密码框**：`MacAccessibilityText.ReadSelectedText` 对 `AXSecureTextField` 返回 null，读取侧的守卫至此落地（阶段 6.5 里说明过，`Type`/`Paste` 注入路径做不到这个检查，因为 CGEvent 不携带目的地）。
 
 写回模式：
 
@@ -815,12 +828,12 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 **状态：进行中（2026-09-12）**
 
-已完成 `MacGlobalHotkeys`、`MacKeyboardState` 与 `MacPointerPosition`（后者随阶段 9.1 的 `MacDisplayGeometry` 一并落地）；`MacGlobalPointerMonitor` 仍未实现。
+阶段 7 的四个适配器全部完成。`MacPointerPosition` 随阶段 9.1 的 `MacDisplayGeometry` 落地。
 
 #### 实现
 
 - [x] `MacGlobalHotkeys`
-- [ ] `MacGlobalPointerMonitor`
+- [x] `MacGlobalPointerMonitor`
 - [x] `MacPointerPosition`（见阶段 9.1）
 - [x] `MacKeyboardState`
 
@@ -856,22 +869,46 @@ Carbon 事件派发在**主线程 run loop** 上。因此回调里只做一件�
 
 #### 鼠标监听
 
+**状态：已完成（2026-09-12），`WindowMoveStarted` 除外**
+
 需要产生现有契约事件：
 
-- `PrimaryPressed`。
-- `PrimaryReleased`。
-- `PrimaryDoubleClick`。
-- `WindowMoveStarted`。
+- [x] `PrimaryPressed`。
+- [x] `PrimaryReleased`。
+- [x] `PrimaryDoubleClick` —— 用 `kCGMouseEventClickState`，即 macOS 自己累计的连击数，不需要像 Windows 那样自己做时间窗和位移判定。
+- [ ] `WindowMoveStarted` —— **未实现**，见下。
 
-事件必须携带统一桌面物理像素坐标、前台目标、鼠标下目标、EasyChat Overlay 判断、时间戳和剪贴板序列。
+事件携带：
+
+- [x] 统一桌面物理像素坐标（经 `MacDisplayGeometry` 换算）。
+- [x] 前台目标（`NSWorkspace.frontmostApplication`）。
+- [x] 鼠标下目标（`CGWindowListCopyWindowInfo` 取最前一个包含该点的窗口，用其 owner pid + window number 编码 token）。
+- [x] EasyChat Overlay 判断（鼠标下窗口的 owner pid 是否等于本进程）。
+- [x] 时间戳。
+- [x] 剪贴板序列（`NSPasteboard.changeCount`）。
+- [ ] `CapturedTarget` —— **macOS 没有鼠标捕获窗口这个概念**，因此恒为空。`SelectionInteractionCoordinator` 对空 token 的守卫会自行停用，而不是去比较一个编造出来的值。
+
+窗口列表的 window number、owner pid、bounds、layer **不需要任何隐私授权**；被屏幕录制授权挡住的只有窗口标题和内容，本适配器两者都不读。
+
+**`WindowMoveStarted` 为什么留空**：Windows 靠 `EVENT_SYSTEM_MOVESIZESTART` 或比较手势前后的窗口矩形来判定。macOS 的等价做法是在 mouse-down 记下鼠标下窗口的 bounds、mouse-up 再比一次——`CGWindowListCopyWindowInfo` 能拿到 bounds，所以技术上可行。没有本轮做的原因是它的**行为正确性无法在没有输入监视授权的测试宿主里验证**，而这个事件的作用是抑制「拖动窗口标题栏被误判为划词」，做错了比没做更糟。留到阶段 8 的真机链路，连同 tap 回调本身一起验收。
 
 #### 线程要求
 
-- CGEventTap 使用独立 RunLoop。
-- 回调中不运行翻译或 UI 工作。
-- 回调快速转发到 C# 队列。
-- event tap 被系统禁用时尝试恢复，并记录失败。
-- Dispose 必须退出 RunLoop，不遗留后台线程。
+- [x] CGEventTap 使用独立 RunLoop。
+- [x] 回调中不运行翻译或 UI 工作。
+- [x] 回调快速转发到 C# 队列。
+- [x] event tap 被系统禁用时尝试恢复，并记录失败。
+- [x] Dispose 必须退出 RunLoop，不遗留后台线程。
+
+tap 用 `kCGEventTapOptionListenOnly`：EasyChat 只观察点击，永不修改或吞掉事件，因此这里出任何故障都不可能让用户的鼠标失灵。
+
+tap 回调里只做一件事：打时间戳后塞进 Channel。解析前台应用、鼠标下窗口、剪贴板状态全部在 pump 线程做——回调里任何慢操作都会表现为**全系统输入延迟**。
+
+独立线程独立 run loop，而不是借用 UI 的 run loop：后者会把鼠标延迟和界面正在做的事绑在一起。
+
+macOS 会在 tap 太慢或用户强制关闭时把它禁用（`kCGEventTapDisabledByTimeout` / `ByUserInput`，这两个事件无视 mask 照样投递）。重新 enable 是官方的恢复手段，不做的话监视器会**静默死掉**。
+
+`TryStart` 对 run loop 线程的启动应答设了 2 秒上限：UI 路径上的调用方绝不能被一个没返回的原生调用无限期阻塞。Dispose 先 `CFRunLoopStop` 再 join 线程，之后才释放 CoreFoundation 句柄——句柄归创建它的那个线程所有，没有后台线程可以活过这次调用。
 
 #### 阶段门槛
 

@@ -56,6 +56,33 @@ internal static class MacAccessibilityText
         }
     }
 
+    /// <summary>
+    /// Reads the focused element's selected text, or null when there is none. A password field
+    /// answers null: macOS marks those so assistive software leaves them alone, and reading one
+    /// anyway would defeat a system protection rather than adapt to it.
+    /// </summary>
+    internal static string? ReadSelectedText(IntPtr element)
+    {
+        if (element == IntPtr.Zero || IsSecureField(element))
+            return null;
+
+        var value = AccessibilityNative.CopyAttribute(
+            element,
+            AccessibilityNative.SelectedTextAttribute);
+        if (value == IntPtr.Zero)
+            return null;
+
+        try
+        {
+            var text = FoundationNative.ReadString(value);
+            return string.IsNullOrEmpty(text) ? null : text;
+        }
+        finally
+        {
+            CoreFoundationNative.CFRelease(value);
+        }
+    }
+
     /// <summary>Reads the number of characters the focused text element holds.</summary>
     internal static bool TryReadLength(IntPtr element, out int length)
     {

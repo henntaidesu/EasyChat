@@ -50,6 +50,43 @@ internal static partial class CoreFoundationNative
     [LibraryImport(LibraryPath)]
     internal static partial IntPtr CFDataGetBytePtr(IntPtr data);
 
+    [LibraryImport(LibraryPath)]
+    internal static partial nint CFArrayGetCount(IntPtr array);
+
+    [LibraryImport(LibraryPath)]
+    internal static partial IntPtr CFArrayGetValueAtIndex(IntPtr array, nint index);
+
+    [LibraryImport(LibraryPath)]
+    internal static partial IntPtr CFDictionaryGetValue(IntPtr dictionary, IntPtr key);
+
+    [LibraryImport(LibraryPath)]
+    internal static partial IntPtr CFMachPortCreateRunLoopSource(
+        IntPtr allocator,
+        IntPtr port,
+        nint order);
+
+    [LibraryImport(LibraryPath)]
+    internal static partial IntPtr CFRunLoopGetCurrent();
+
+    [LibraryImport(LibraryPath)]
+    internal static partial void CFRunLoopAddSource(IntPtr runLoop, IntPtr source, IntPtr mode);
+
+    [LibraryImport(LibraryPath)]
+    internal static partial void CFRunLoopRemoveSource(IntPtr runLoop, IntPtr source, IntPtr mode);
+
+    [LibraryImport(LibraryPath)]
+    internal static partial void CFRunLoopRun();
+
+    [LibraryImport(LibraryPath)]
+    internal static partial void CFRunLoopStop(IntPtr runLoop);
+
+    /// <summary>The <c>kCFRunLoopCommonModes</c> constant.</summary>
+    internal static IntPtr RunLoopCommonModes => CommonModes.Value;
+
+    private static readonly Lazy<IntPtr> CommonModes = new(
+        () => ReadGlobal("kCFRunLoopCommonModes"),
+        LazyThreadSafetyMode.ExecutionAndPublication);
+
     /// <summary>Value of <c>kCFNumberNSIntegerType</c>.</summary>
     private const int NSIntegerType = 15;
 
