@@ -551,7 +551,7 @@ Windows 侧未改动，`WindowsPlatformCapabilities` 的无条件 `Available` �
 
 **状态：进行中（2026-09-12）**
 
-已完成 5.1（Skia 配置）与 5.4（开机启动）；5.2 窗口桥和 5.3 主窗口真机行为仍未做。
+已完成 5.1（Skia 配置）、5.2（窗口桥代码）与 5.4（开机启动）；5.3 主窗口真机行为需要先打出 `.app` 才能验收。
 
 #### 5.1 Mac Program
 
@@ -585,6 +585,24 @@ Windows 侧未改动，`WindowsPlatformCapabilities` 的无条件 `Available` �
 - 全屏应用上方的字幕和工具栏行为。
 
 Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastructure。
+
+**已实现（2026-09-12）**：`EasyChat.Infrastructure.MacOS/Input/MacOwnedWindowBehavior.cs` 与 `EasyChat.Desktop.MacOS/AvaloniaMacWindowBehavior.cs`。后者是唯一接触 UI 框架的一侧，只把平台句柄交给前者；`NSView → NSWindow` 的解析和全部 AppKit 消息都在 Infrastructure 内。注意架构测试禁止 macOS Infrastructure 源码中出现 "Avalonia" 字样，**注释也算**，所以该程序集里一律称「toolkit 平台句柄」。
+
+| 职责 | AppKit 落地方式 |
+| --- | --- |
+| Topmost/NSWindow level | `setLevel:` = `NSFloatingWindowLevel` |
+| Mission Control / Space | `setCollectionBehavior:` = `canJoinAllSpaces｜stationary｜ignoresCycle` |
+| 全屏应用上方 | 同上再加 `fullScreenAuxiliary` |
+| 提升但不抢焦点 | `orderFrontRegardless` |
+| 鼠标穿透 | `setIgnoresMouseEvents:` |
+| 屏幕捕获排除 | `setSharingType:` = `NSWindowSharingNone`，调用前先 `respondsToSelector:` 预检，不支持时返回 `false` 让调用方走视觉降级 |
+| 应用失活后不隐藏 | `setHidesOnDeactivate:` = `NO`，否则用户切回被监听的应用时字幕会消失 |
+
+**「非激活显示」的真实限制**：AppKit 没有办法阻止一个普通 `NSWindow` 成为 key window——只有以非激活样式创建的 `NSPanel` 才能做到，而 Avalonia 创建的不是 `NSPanel`。因此该保证不是来自某个属性，而是来自**显示方式**：用 `orderFrontRegardless` 抬升而绝不调用 `makeKeyAndOrderFront:` 或 `activateIgnoringOtherApps:`，前台应用就保住 key 状态和文本输入上下文。这条限制已写进 `MacOwnedWindowBehavior` 的文档注释，调用方不能把它和一个会激活的 show 配对使用。
+
+因此 `RestoreForegroundTextInputContext` 在 macOS 上**不实现**（沿用契约的默认空实现）：Windows 需要它是因为要恢复 IME 上下文，而 macOS 的浮窗从未成为 key window，输入上下文根本没有离开过前台应用。这是「适配器不伪造行为」的一部分，不是遗漏。
+
+真机验证：`MacOwnedWindowBehaviorTests` 确认 AppKit 加载后 `NSWindow` 及上表全部 selector（含 `setSharingType:`）在 macOS 26 上真实存在，并覆盖空句柄的拒绝路径与捕获排除的失败降级。窗口的可见行为必须等到 5.3 打出 `.app` 后真机验收。
 
 #### 5.3 主窗口行为
 
@@ -630,7 +648,9 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 主程序能以正确 `.app` 身份启动、关闭、隐藏、恢复、二次激活和开机启动。
 
-**门槛状态：未达成。** 5.1 的 Skia 配置已与 Windows 对齐（`MaxGpuResourceSizeBytes = 16 MiB`）；worker 参数分发暂不需要，因为 macOS 还没有 worker（阶段 9～11）。5.2 窗口桥与 5.3 的真机行为清单必须在打出 `.app` 之后才能验收，届时一并复核本门槛。
+**门槛状态：未达成。** 5.1 的 Skia 配置已与 Windows 对齐（`MaxGpuResourceSizeBytes = 16 MiB`）；worker 参数分发暂不需要，因为 macOS 还没有 worker（阶段 9～11）。5.2 的代码已落地并通过 selector 级真机验证，但**窗口的可见行为无法在没有 `.app` 的情况下验收**；5.3 的清单同理。两者都顺延到阶段 15 打出签名 `.app` 之后复核。
+
+`--verify-composition` 缺失端口从 15 项降到 14 项（`IPlatformWindowBehavior` 已解决）。
 
 ### 阶段 6：剪贴板、应用枚举、焦点和文本写回
 

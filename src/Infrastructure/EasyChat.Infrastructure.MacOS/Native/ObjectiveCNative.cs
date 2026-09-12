@@ -32,6 +32,23 @@ internal static partial class ObjectiveCNative
     [return: MarshalAs(UnmanagedType.U1)]
     internal static partial bool SendReturningBool(IntPtr receiver, IntPtr selector, IntPtr argument);
 
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial void Send(IntPtr receiver, IntPtr selector);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial void Send(IntPtr receiver, IntPtr selector, nint argument);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial void Send(
+        IntPtr receiver,
+        IntPtr selector,
+        [MarshalAs(UnmanagedType.U1)] bool argument);
+
+    /// <summary>Answers whether the receiver implements <paramref name="selector"/>.</summary>
+    internal static bool Responds(IntPtr receiver, string selector) =>
+        receiver != IntPtr.Zero
+        && SendReturningBool(receiver, GetSelector("respondsToSelector:"), GetSelector(selector));
+
     /// <summary>
     /// Reads an <c>NSString</c> as managed text. The returned buffer is owned by the autorelease
     /// pool, so it is copied immediately.
