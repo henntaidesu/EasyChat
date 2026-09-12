@@ -1378,21 +1378,47 @@ macos:microphone:<device-id>
 
 预计：2～4 人日。
 
+**状态：任务 1、2 已完成；3～7 为真机验证项，需先打出 `.app`（2026-09-12）**
+
 这一阶段只允许修改表现，不允许搬入平台业务逻辑。
 
 #### 任务
 
-1. 快捷键显示：`Meta` → `⌘`、`Alt` → `⌥`、`Control` → `⌃`、`Shift` → `⇧`。
-2. 快捷键录制不再保存 `Win +`，兼容读取旧设置，并使用稳定物理键名。
-3. 验证 PingFang SC、Hiragino Sans、Inter 和 CJK 字体回退。
-4. 适配主窗口标题栏拖动、全屏、关闭/隐藏、菜单栏/Dock 和小屏幕缩放。
-5. 验证悬浮窗不抢焦点、跨 Space、全屏播放器、多显示器、点击穿透和屏幕捕获排除。
-6. 验证 OCR/ASR 模型导入、TTS 输出、应用数据目录迁移和 macOS 文件选择器行为。
-7. 沿用现有 Toast 和错误资源，补充必要的中英文 macOS 权限说明，不新增独立功能页面。
+1. [x] 快捷键显示：`Meta` → `⌘`、`Alt` → `⌥`、`Control` → `⌃`、`Shift` → `⇧`。
+2. [x] 快捷键录制不再保存 `Win +`，兼容读取旧设置（阶段 2 已完成）；物理键名见下方说明。
+3. [ ] 验证 PingFang SC、Hiragino Sans、Inter 和 CJK 字体回退。
+4. [ ] 适配主窗口标题栏拖动、全屏、关闭/隐藏、菜单栏/Dock 和小屏幕缩放。
+5. [ ] 验证悬浮窗不抢焦点、跨 Space、全屏播放器、多显示器、点击穿透和屏幕捕获排除。
+6. [ ] 验证 OCR/ASR 模型导入、TTS 输出、应用数据目录迁移和 macOS 文件选择器行为。
+7. [ ] 沿用现有 Toast 和错误资源，补充必要的中英文 macOS 权限说明，不新增独立功能页面。
+
+**任务 3～7 全部是「验证」性质**，需要一个能跑起来的 `.app` 才能判断，因此与 5.3 一样顺延到阶段 15 打包之后。现在把它们勾上等于说谎。
+
+#### 快捷键显示的落地方式
+
+约束是 Presentation **不能按操作系统分支**（架构测试强制），所以约定由 Host 提供而不是在 Presentation 里判断。实现：
+
+- `EasyChat.Presentation.Shared/Controls/KeyGlyphs.cs`：`KeyGlyphConvention` 记录四个修饰键怎么写，`KeyGlyphs.Format` 是唯一决定「存储的键名 → 屏幕上的样子」的地方。
+- `KeyGlyphConvention.Names`（`Ctrl`/`Alt`/`Shift`/`Win`，Windows 保持原样）与 `KeyGlyphConvention.MacSymbols`（`⌃`/`⌥`/`⇧`/`⌘`）。
+- macOS `Program.Main` 在启动时设置 `KeyGlyphs.Convention = KeyGlyphConvention.MacSymbols`。默认值是 `Names`，所以 Windows 行为零变化。
+
+这是进程级的一次性设置，性质与当前区域性（`CurrentUICulture`）相同：Host 选一次，界面里所有快捷键跟着走。
+
+顺带把 `KeySequenceDisplay` 里原本内联的键名映射提取成静态方法——控件本身要 Avalonia 运行时才能实例化，映射抽出来之后就能直接单元测试了。
+
+旧设置里的 `Win`、`Windows` 都按 Meta 读取，所以在 Mac 上显示为 `⌘` 而不是字面的「Win」。
+
+#### 一个已知的不一致：键名与物理键位
+
+任务 2 提到「使用稳定物理键名」。目前录制取的是 Avalonia 的 `e.Key`，它经过键盘布局映射；而 `MacGlobalHotkeys` 按虚拟键**码**（物理键位）注册。在非 US 布局上这两者可能对不上。
+
+**这一点 Windows 侧同样存在**（`WindowsKeyCombination` 用的 VK 码也受布局影响），因此不是 macOS 引入的回归，而是两个平台共有的既有行为。真要修需要改成记录 `PhysicalKey` 并在两个平台的键表上同步，属于跨平台改动，不在本阶段范围内——此处如实记录，留待需要时单独处理。
 
 #### 阶段门槛
 
 Presentation 不包含 Apple Framework 类型或 `OperatingSystem.IsMacOS()`；交互符合 macOS 习惯。
+
+**门槛状态：前半已达成**——架构测试持续验证 Presentation 无 `OperatingSystem.IsMacOS`，本次改动也没有在任何共享层引入操作系统判断。后半「交互符合 macOS 习惯」属于任务 3～7 的真机验收。
 
 ### 阶段 15：打包、签名、公证与更新
 

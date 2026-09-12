@@ -3,6 +3,7 @@ using EasyChat.Desktop.MacOS.ApplicationLifecycle;
 using EasyChat.Desktop.MacOS.Capture;
 using EasyChat.Desktop.MacOS.DependencyInjection;
 using EasyChat.Infrastructure.MacOS.DependencyInjection;
+using EasyChat.Presentation.Shared.Controls;
 
 namespace EasyChat.Desktop.MacOS;
 
@@ -19,6 +20,10 @@ internal static class Program
             MacScreenshotWorker.Run(args[1]);
             return;
         }
+
+        // Shortcuts are stored with platform-neutral names, so the host says how they are written.
+        // A Mac user expects the symbols from the keys and the menu bar, not "Win + Shift + A".
+        KeyGlyphs.Convention = KeyGlyphConvention.MacSymbols;
 
         DesktopApplication.Run(
             args,
