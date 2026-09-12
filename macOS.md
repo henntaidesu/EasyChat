@@ -1597,9 +1597,39 @@ Failed to create CoreCLR, HRESULT: 0x80070008
 
 #### 15.4 更新
 
-**状态：未实现。** 现有更新走 Velopack，而 Velopack 只在 Windows Host 的 `DesktopApplication.Run` 里初始化（`initializeDeployment` 参数在 macOS Host 上没有传）。macOS 需要独立的更新路径，计划列出的要求（独立 channel、只匹配 `osx-arm64`、退出全部 worker、整包替换 `.app`、更新后签名仍有效、重启 bundle 而非内部可执行文件、保持同一 bundle identifier 与签名主体以免丢失 TCC 授权）全部有效且尚未开始。
+**状态：客户端侧已就绪；发布 `osx` channel 待签名（2026-09-12）**
 
-其中「保持同一 bundle identifier 与签名主体」尤其关键：macOS 的隐私授权绑定在签名身份上，换了签名主体等于让用户重新授权辅助功能、屏幕录制和麦克风。
+**这一节的前提此前是错的，实测后更正。** 原判断是「macOS 需要独立的更新路径」。实际上 `VelopackApplicationUpdateService` 位于**平台无关**的 Infrastructure 中，由 `AddEasyChatInfrastructure` 注册，macOS Host 经 `DesktopApplication.Run` 已经拿到它——`--verify-composition` 里从来没有 `IApplicationUpdateService` 缺失。
+
+在 macOS 上实测 Velopack 0.0.1298：
+
+```text
+VelopackApp.Build().Run()  → 正常返回（非 Velopack 安装环境下是 no-op）
+SystemOs: OSX
+SystemRid: osx-arm64
+resolved channel: osx
+```
+
+因此计划列出的要求里，**有三条不需要任何新代码**：
+
+| 要求 | 状态 |
+| --- | --- |
+| 独立 macOS release channel | ✅ Velopack 自动解析为 `osx` |
+| 只匹配 `osx-arm64` 包 | ✅ `SystemRid` 即 `osx-arm64` |
+| 不让 Windows 客户端看到 macOS 包，反之亦然 | ✅ 由 channel 分离天然保证（`releases.osx.json` / `releases.win.json`） |
+| 重启 bundle 而非内部可执行文件 | Velopack 在 macOS 上按 `.app` 替换与重启处理 |
+| 整包替换 `.app` | 同上 |
+| 更新时退出全部 worker | ⚠️ 见下 |
+| 更新后签名保持有效 | 打包与签名问题，随 `osx` channel 一并验证 |
+| 保持同一 bundle identifier 与签名主体 | 打包问题，见下 |
+
+**本次唯一的代码改动**：macOS `Program.cs` 现在和 Windows 一样调用 `VelopackApp.Build().Run()`。这个调用必须在任何文件系统操作之前发生——它负责更新后的首次启动与随之而来的重启。已实测在非 Velopack 打包的 bundle 中它是 no-op，加进去不会影响现在的 `.app`。
+
+**「更新时退出全部 worker」**：截图 worker 在每次应答后**立即退役**（阶段 9.3 的设计），所以正常情况下更新时没有 worker 存活。但 `ApplyUpdatesAndRestart` 仍可能与一次正在进行的截图相撞，这一点在真机验收时需要确认。
+
+**「保持同一 bundle identifier 与签名主体」尤其关键**：macOS 的隐私授权绑定在签名身份上，换了签名主体等于让用户重新授权辅助功能、屏幕录制和麦克风。这是打包环节必须守住的，不是代码能保证的。
+
+**仍然阻塞的**：CI 里发布 `osx` channel 需要先有 Developer ID 证书与公证（见 15.3），因为未签名的 `.app` 即使能下载也过不了 Gatekeeper。在此之前 `manager.IsInstalled` 为 false，更新检查会如实回答「没有可用更新」而不是报错。
 
 #### 阶段门槛
 
@@ -1807,7 +1837,7 @@ macOS 集成测试包括：
 | 12 音频采集 | 12.1/12.4 内核完成；12.2/12.3 采集未实现 |
 | 13 播放、TTS、同传 | 已完成 |
 | 14 Presentation 适配 | 任务 1～2 完成；3～7 待真机 |
-| 15 打包签名公证更新 | 打包与本地签名完成；公证待证书；15.4 更新未实现 |
+| 15 打包签名公证更新 | 打包与本地签名完成；公证待证书；15.4 客户端已就绪，发布 channel 待签名 |
 | 16 CI 与门禁 | 测试门禁已启用；签名门禁待证书 |
 
 ### 阻塞项与所需决策
@@ -1818,7 +1848,7 @@ macOS 集成测试包括：
 2. **屏幕录制授权（挡住 9.2 与 12.2 的验证）** —— 代码已写，但采集路径一次都没真机跑过。
 3. **Developer ID 证书与 Apple 账号（挡住公证、Gatekeeper、发布门禁）**。
 4. **真机验收（挡住 5.3、8、9.2、14.3～7）** —— 需要人在装好 `.app` 的机器上操作，自动化替代不了。
-5. **12.2/12.3 音频采集与 15.4 更新路径** —— 尚未实现，不依赖外部条件，可继续推进。
+5. ~~12.2/12.3 音频采集与 15.4 更新路径~~ —— **已完成**（2026-09-12）。至此不依赖外部条件的适配器工作全部结束。
 
 ### 本次会话遗留的技术债
 

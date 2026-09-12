@@ -33,7 +33,11 @@ internal static class Program
                 services.AddEasyChatMacOSInfrastructure();
                 services.AddEasyChatMacOSDesktop();
             },
-            configureAppBuilder: builder => builder
+            // Velopack's hooks have to run before anything else touches the file system: this is
+            // what handles a first launch after an update and the relaunch that follows one. In a
+            // bundle that was not produced by Velopack it does nothing.
+            () => Velopack.VelopackApp.Build().Run(),
+            builder => builder
                 .With(new SkiaOptions
                 {
                     MaxGpuResourceSizeBytes = 16L * 1024 * 1024
