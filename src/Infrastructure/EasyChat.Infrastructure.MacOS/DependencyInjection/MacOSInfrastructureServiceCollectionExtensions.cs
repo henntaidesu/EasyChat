@@ -1,5 +1,6 @@
 using EasyChat.Contracts.Platform;
 using EasyChat.Infrastructure.MacOS.ApplicationStartup;
+using EasyChat.Infrastructure.MacOS.Audio;
 using EasyChat.Infrastructure.MacOS.Capture;
 using EasyChat.Infrastructure.MacOS.Input;
 using Microsoft.Extensions.DependencyInjection;
@@ -38,6 +39,7 @@ public static class MacOSInfrastructureServiceCollectionExtensions
         services.AddSingleton<IPointerPosition, MacPointerPosition>();
         services.AddSingleton<IScreenCatalog, MacScreenCatalog>();
         services.AddSingleton<IScreenCapture, MacScreenCapture>();
+        services.AddSingleton<IAudioCaptureSourceCatalog, MacAudioCaptureSourceCatalog>();
         services.AddSingleton<IGlobalPointerMonitor, MacGlobalPointerMonitor>();
         services.AddSingleton<ISelectedTextCapture, MacSelectedTextCapture>();
         return services;

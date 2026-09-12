@@ -90,6 +90,44 @@ internal static partial class CoreFoundationNative
         () => ReadGlobal("kCFRunLoopCommonModes"),
         LazyThreadSafetyMode.ExecutionAndPublication);
 
+    [LibraryImport(LibraryPath)]
+    private static partial IntPtr CFStringGetCStringPtr(IntPtr text, uint encoding);
+
+    [LibraryImport(LibraryPath)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    private static partial bool CFStringGetCString(
+        IntPtr text,
+        IntPtr buffer,
+        nint bufferSize,
+        uint encoding);
+
+    /// <summary>
+    /// Reads a <c>CFString</c> as managed text. The fast path is only available when the string
+    /// already holds UTF-8 internally, so a copy is made otherwise.
+    /// </summary>
+    internal static string? ReadString(IntPtr text)
+    {
+        if (text == IntPtr.Zero)
+            return null;
+
+        var direct = CFStringGetCStringPtr(text, Utf8Encoding);
+        if (direct != IntPtr.Zero)
+            return Marshal.PtrToStringUTF8(direct);
+
+        const int capacity = 1024;
+        var buffer = Marshal.AllocHGlobal(capacity);
+        try
+        {
+            return CFStringGetCString(text, buffer, capacity, Utf8Encoding)
+                ? Marshal.PtrToStringUTF8(buffer)
+                : null;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
     /// <summary>Value of <c>kCFNumberNSIntegerType</c>.</summary>
     private const int NSIntegerType = 15;
 
