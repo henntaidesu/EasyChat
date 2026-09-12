@@ -40,6 +40,9 @@ public static class MacOSInfrastructureServiceCollectionExtensions
         services.AddSingleton<IScreenCatalog, MacScreenCatalog>();
         services.AddSingleton<IScreenCapture, MacScreenCapture>();
         services.AddSingleton<IAudioCaptureSourceCatalog, MacAudioCaptureSourceCatalog>();
+        services.AddSingleton<IAudioPlaybackDeviceCatalog, MacAudioPlaybackDeviceCatalog>();
+        services.AddSingleton<IAudioPlaybackQueue, MacAudioPlaybackQueue>();
+        services.AddSingleton<IAudioFeedbackCuePlayer, MacAudioFeedbackCuePlayer>();
         services.AddSingleton<IGlobalPointerMonitor, MacGlobalPointerMonitor>();
         services.AddSingleton<ISelectedTextCapture, MacSelectedTextCapture>();
         return services;

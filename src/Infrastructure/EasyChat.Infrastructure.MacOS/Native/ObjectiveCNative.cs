@@ -49,6 +49,9 @@ internal static partial class ObjectiveCNative
     internal static partial IntPtr SendReturningHandle(IntPtr receiver, IntPtr selector, int argument);
 
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial float SendReturningSingle(IntPtr receiver, IntPtr selector);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
     internal static partial nint SendReturningNInt(IntPtr receiver, IntPtr selector);
 
     [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]

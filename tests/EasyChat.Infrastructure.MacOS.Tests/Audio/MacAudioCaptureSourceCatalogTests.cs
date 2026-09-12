@@ -97,7 +97,7 @@ public sealed class MacAudioCaptureSourceCatalogTests
         Assert.IsNotEmpty(devices);
         foreach (var device in devices)
         {
-            Assert.IsGreaterThan(0, device.InputChannelCount, device.Name);
+            Assert.IsGreaterThan(0, device.ChannelCount, device.Name);
             Assert.IsFalse(string.IsNullOrWhiteSpace(device.Uid), device.Name);
         }
     }

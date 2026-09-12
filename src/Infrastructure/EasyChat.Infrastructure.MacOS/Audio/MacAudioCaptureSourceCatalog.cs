@@ -93,7 +93,7 @@ internal sealed class MacAudioCaptureSourceCatalog : IAudioCaptureSourceCatalog
                 AudioCaptureSourceKind.Microphone,
                 device.Name,
                 device.Name,
-                $"{device.InputChannelCount} input channel(s)",
+                $"{device.ChannelCount} input channel(s)",
                 ReadOnlyMemory<byte>.Empty,
                 IsVirtualCable: IsLoopbackDriver(device.Name),
                 IsDefault: string.Equals(device.Uid, defaultUid, StringComparison.Ordinal));

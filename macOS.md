@@ -1308,22 +1308,49 @@ macos:microphone:<device-id>
 
 预计：3～5 人日。
 
+**状态：已完成（2026-09-12），播放链路已真机验证**
+
 #### 实现
 
-- `MacAudioPlaybackDeviceCatalog`
-- `MacAudioPlaybackQueue`
-- `MacAudioFeedbackCuePlayer`
+- [x] `MacAudioPlaybackDeviceCatalog`
+- [x] `MacAudioPlaybackQueue`
+- [x] `MacAudioFeedbackCuePlayer`
 
 #### 播放要求
 
-- 默认播放设备。
-- 虚拟音频设备。
-- 顺序播放队列。
-- Stop 立即停止当前音频并清空队列。
-- 支持现有 TTS 返回的媒体格式。
-- 设备切换后重新初始化。
-- 设备失效时给出可诊断错误。
-- UI 提示音不能路由到虚拟设备。
+- [x] 默认播放设备。
+- [x] 虚拟音频设备。
+- [x] 顺序播放队列。
+- [x] Stop 立即停止当前音频并清空队列。
+- [x] 支持现有 TTS 返回的媒体格式（按 media type 选扩展名，交给 AVFoundation 解码）。
+- [x] 设备切换后重新初始化（每个片段都重新解析目标设备并新建播放器）。
+- [x] 设备失效时给出可诊断错误。
+- [x] UI 提示音不能路由到虚拟设备。
+
+**为什么用 `AVPlayer` 而不是 `AVAudioPlayer`**：`AVPlayer` 是 macOS 上唯一简单且暴露 `audioOutputDeviceUniqueID` 的播放器，而「把语音送到指定设备」正是同声传译这条链路的全部意义。播放本身不需要任何隐私授权。代价是 `AVPlayer` 从 URL 播放，所以每个片段先落到临时文件。
+
+**播放结束判定用轮询 `rate` 而非 KVO**：用 KVO 意味着要在运行时构造一个 Objective-C 观察者类来接回调，而片段只有几秒。判定时必须**先看到 rate 升起来**才能把 rate 归零读作「播完」——因为从 `play()` 到真正开始播之间 rate 也是 0。
+
+**提示音自己合成而不是借用系统音效**：Windows 侧用 `Console.Beep` 发三个不同音高，而 `Console.Beep` 在非 Windows 上不存在。与其换成某个系统提示音，不如合成同样的三个音高与时长，让提示音在两个平台上**听起来完全一致**。提示音一律走默认输出——路由进 loopback 设备会被对话另一端听见，这正是契约禁止的。
+
+#### 虚拟音频设备识别
+
+当前 Windows 只识别 VB-Audio 名称。macOS 需要识别已有等价设备，例如 BlackHole、Loopback 或其他具有输入/输出配对能力的虚拟设备。
+
+这不是增加新功能，而是实现现有 `IsVirtualCable` 契约。不得在 Presentation 中硬编码具体驱动名称；设备判定属于 Mac Infrastructure。
+
+**已实现为 `MacVirtualAudioDevices.IsLoopback`（Infrastructure 内），按名字匹配 BlackHole / Loopback / Soundflower / VB-Cable 等。**这是启发式且明确标注为启发式：CoreAudio **不标记**设备是否虚拟——在系统看来 loopback 驱动就是一个同时有输入和输出通道的普通设备。这与 Windows 侧匹配 VB-Audio 名称是同一做法，只是换成 macOS 的等价物。
+
+请求走 loopback 但系统未安装任何 loopback 驱动时，**降级到默认输出并记警告**而不是失败：用户至少还能听到译文。
+
+#### 真机验证（2026-09-12）
+
+- 输出设备枚举：真实设备、身份不重复、至多一个标记为默认，全部无需任何授权。
+- **整条播放链路用一段静音片段真机跑通**：临时文件 → `AVPlayer` 创建 → 解码 → 播放 → 结束判定 → 队列排空。用静音是为了不在开发者机器上发出声音，同时完整覆盖这条路径。
+- `Stop` 排空队列：排入 5 段各一秒的片段后 `Stop`，整体耗时远低于 5 秒，证明它不是「让积压播完」。
+- 提示音：三个 cue 音频互不相同，且全部走默认输出。
+
+**测试暴露的一个真实缺陷**：`DisposeAsync` 原本不是幂等的，第二次调用会在 `CancellationTokenSource` 上抛 `ObjectDisposedException`。容器持有的队列同时也可能被使用它的工作流停止并释放，所以幂等是必须的，已修复。
 
 #### 虚拟音频设备识别
 

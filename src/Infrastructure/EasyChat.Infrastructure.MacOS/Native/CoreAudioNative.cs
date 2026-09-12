@@ -11,12 +11,12 @@ internal struct AudioPropertyAddress
     internal uint Element;
 }
 
-/// <summary>One CoreAudio input device, as much as enumeration reveals without any approval.</summary>
-internal readonly record struct AudioInputDevice(
+/// <summary>One CoreAudio device, as much as enumeration reveals without any approval.</summary>
+internal readonly record struct AudioDevice(
     uint DeviceId,
     string Uid,
     string Name,
-    int InputChannelCount);
+    int ChannelCount);
 
 /// <summary>
 /// CoreAudio device enumeration.
@@ -40,6 +40,9 @@ internal static partial class CoreAudioNative
     /// <summary>Four-character code <c>dIn </c>, the default input device.</summary>
     private const uint DefaultInputSelector = 0x64496E20;
 
+    /// <summary>Four-character code <c>dOut</c>, the default output device.</summary>
+    private const uint DefaultOutputSelector = 0x644F7574;
+
     /// <summary>Four-character code <c>uid </c>, the device's persistent identifier.</summary>
     private const uint DeviceUidSelector = 0x75696420;
 
@@ -54,6 +57,9 @@ internal static partial class CoreAudioNative
 
     /// <summary>Four-character code <c>inpt</c>.</summary>
     private const uint InputScope = 0x696E7074;
+
+    /// <summary>Four-character code <c>outp</c>.</summary>
+    private const uint OutputScope = 0x6F757470;
 
     [LibraryImport(LibraryPath)]
     private static partial int AudioObjectGetPropertyDataSize(
@@ -73,32 +79,50 @@ internal static partial class CoreAudioNative
         IntPtr data);
 
     /// <summary>Every device that can record, in the order CoreAudio reports them.</summary>
-    internal static IReadOnlyList<AudioInputDevice> InputDevices()
+    internal static IReadOnlyList<AudioDevice> InputDevices() => DevicesInScope(InputScope);
+
+    /// <summary>Every device that can play back, in the order CoreAudio reports them.</summary>
+    internal static IReadOnlyList<AudioDevice> OutputDevices() => DevicesInScope(OutputScope);
+
+    /// <summary>
+    /// A device belongs to a scope when it has channels in that scope. That is how a microphone is
+    /// told apart from a speaker without guessing from the name, and it is also why a loopback
+    /// driver correctly appears in both lists.
+    /// </summary>
+    private static IReadOnlyList<AudioDevice> DevicesInScope(uint scope)
     {
-        var devices = new List<AudioInputDevice>();
+        var devices = new List<AudioDevice>();
         foreach (var deviceId in AllDevices())
         {
-            var channels = InputChannelCount(deviceId);
+            var channels = ChannelCount(deviceId, scope);
             if (channels <= 0)
                 continue;
 
             var uid = ReadString(deviceId, DeviceUidSelector);
-            var name = ReadString(deviceId, NameSelector);
             if (uid is null)
                 continue;
 
-            devices.Add(new AudioInputDevice(deviceId, uid, name ?? uid, channels));
+            devices.Add(new AudioDevice(
+                deviceId,
+                uid,
+                ReadString(deviceId, NameSelector) ?? uid,
+                channels));
         }
 
         return devices;
     }
 
     /// <summary>The device the user has chosen as their default input, or null when there is none.</summary>
-    internal static string? DefaultInputDeviceUid()
+    internal static string? DefaultInputDeviceUid() => DefaultDeviceUid(DefaultInputSelector);
+
+    /// <summary>The device the user has chosen as their default output, or null when there is none.</summary>
+    internal static string? DefaultOutputDeviceUid() => DefaultDeviceUid(DefaultOutputSelector);
+
+    private static string? DefaultDeviceUid(uint selector)
     {
         var address = new AudioPropertyAddress
         {
-            Selector = DefaultInputSelector,
+            Selector = selector,
             Scope = GlobalScope,
             Element = 0
         };
@@ -150,16 +174,13 @@ internal static partial class CoreAudioNative
         }
     }
 
-    /// <summary>
-    /// Sums the channels of every input stream. A device with none is an output-only device, which
-    /// is how a speaker is told apart from a microphone without guessing from its name.
-    /// </summary>
-    private static int InputChannelCount(uint deviceId)
+    /// <summary>Sums the channels of every stream in the given scope.</summary>
+    private static int ChannelCount(uint deviceId, uint scope)
     {
         var address = new AudioPropertyAddress
         {
             Selector = StreamConfigurationSelector,
-            Scope = InputScope,
+            Scope = scope,
             Element = 0
         };
         if (AudioObjectGetPropertyDataSize(deviceId, ref address, 0, IntPtr.Zero, out var size) != 0
