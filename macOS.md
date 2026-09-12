@@ -1551,25 +1551,55 @@ Failed to create CoreCLR, HRESULT: 0x80070008
 
 预计：5～8 人日。
 
+**状态：CI 已重构为平台矩阵并启用门禁（2026-09-12）；签名公证作业待证书**
+
 #### CI 拆分
 
+实际落地为三个作业（`.github/workflows/build.yml`）：
+
 ```text
-shared-tests
-windows-tests
-macos-arm64-build
-macos-arm64-tests
-macos-package
-macos-sign-notarize
+tests (matrix: windows-latest, macos-latest)   共享测试 + 各自的平台原生测试
+windows-package                                 依赖 tests
+macos-package                                   依赖 tests，产出 ad-hoc 签名的 .app
 ```
+
+比计划少一个 `macos-sign-notarize`：没有 Developer ID 证书和 Apple 账号，那个作业写出来也跑不了。
 
 #### 必须调整
 
-1. 删除测试步骤的 `continue-on-error: true`。
-2. Windows 原生测试只在 Windows 运行。
-3. Mac 原生测试只在 macOS ARM64 runner 运行。
-4. 共享测试必须同时在 Windows 和 macOS 运行。
-5. Composition test 分平台。
-6. Architecture test 对两套 Host/Infrastructure 使用相同规则。
+1. [x] 删除测试步骤的 `continue-on-error: true` —— **门禁现在是真的**。
+2. [x] Windows 原生测试只在 Windows 运行。
+3. [x] Mac 原生测试跟随矩阵（见下方关于 runner 版本的限制）。
+4. [x] 共享测试同时在 Windows 和 macOS 运行。
+5. [x] Composition test 分平台。
+6. [x] Architecture test 对两套 Host/Infrastructure 使用相同规则 —— 并且**在两个平台上都跑**：它读项目文件比较路径，此前只在 Windows 跑，放过了一个反斜杠分隔的 `ProjectReference`，在 macOS 检出时才炸（阶段 0 基线里的那个失败）。
+
+**Composition test 怎么分**：`CompositionRegistrationTests` 组装的是 Windows 模块，其适配器在别处会拒绝注册，因此在非 Windows 上报 Inconclusive。macOS 的组装改由**运行 `.app` 并传 `--verify-composition`** 来验证——那条路同时覆盖真实的 bundle 身份和原生库解析，测试宿主做不到这两点。
+
+#### 两个必须说明的限制
+
+**1. GitHub 的 `macos-latest` 目前是 macOS 15，不是 26。** 本项目所有 macOS 原生测试都以 `OperatingSystem.IsMacOSVersionAtLeast(26)` 为前提，在 CI 上会**全部报 Inconclusive**。也就是说 macOS 作业当前把守的是跨平台逻辑和纯托管部分（token 编解码、快捷键映射、坐标换算、音频混音、BGRA 帧转换、权限状态映射等），**原生桥的真机验证仍然只发生在开发者机器上**。runner 镜像升到 macOS 26 之后，这批测试会自动开始真正运行，无需改代码。
+
+**2. 已知的偶发失败会让 macOS 作业间歇性变红。** `SubtitleSessionCoordinatorTests.FailedStructuredRetryRestoresAnExactSourceTranslationSnapshot` 在本次会话的全量运行中失败过两次，单独重跑和后续全量重跑均通过。它属于 Application 层的字幕时序用例，与 macOS 适配无关，是既有问题（CLAUDE.md 已记录）。**去掉 `continue-on-error` 意味着它现在会真的挡住构建**——这是启用门禁的代价，需要单独 triage，不应靠继续容忍失败来掩盖。
+
+#### 为什么 release.yml 没有加 macOS 作业
+
+没有 Developer ID 证书时只能产出 ad-hoc 签名的 `.app`。这样的包被用户下载后会被 Gatekeeper 直接拒绝，表现为「下载的东西是坏的」——比不提供下载更糟。`build.yml` 里的 `macos-package` 产物标注为**仅供在下载它的机器上测试**，不是分发件。拿到证书后，再在 release 流程中补 `macos-sign-notarize`。
+
+#### 本地验证（2026-09-12）
+
+按 macOS 作业的确切步骤在 Release 配置下跑通：
+
+| 套件 | 结果 |
+| --- | --- |
+| Domain | 1 通过 |
+| Application | 213 通过 |
+| Infrastructure | 92 通过 |
+| Presentation | 224 通过 |
+| Architecture | 11 通过 |
+| Acceptance | 11 通过 / 5 跳过 |
+| Infrastructure.MacOS | 143 通过 / 1 跳过 |
+| **合计** | **695 通过 / 6 跳过 / 0 失败** |
 
 #### 自动化测试
 
@@ -1633,6 +1663,8 @@ macOS 集成测试包括：
 #### 阶段门槛
 
 任何核心功能失败、测试失败、签名失败或权限状态错误都阻止发布。
+
+**门槛状态：测试门禁已达成，签名门禁未达成。** 测试失败现在会阻断构建；签名和公证作业需要证书才能建立。
 
 ## 4. 推荐提交拆分
 
