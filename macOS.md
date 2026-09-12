@@ -990,18 +990,32 @@ Safari、Chrome、TextEdit、Word、VS Code 至少五类应用通过单击、拖
 
 #### 9.2 ScreenCapture
 
+**状态：像素管线已完成并验证；采集步骤未实现（2026-09-12）**
+
 实现 `MacScreenCapture`：
 
-- `PrimaryScreen`。
-- 指定 `Screen`。
-- 指定 `Region`。
-- 使用 ScreenCaptureKit/SCScreenshotManager。
-- 输出 BGRA32。
-- 修正行方向、stride 和 alpha。
-- 保持实际物理像素尺寸。
-- 排除 EasyChat overlay。
-- 屏幕锁定、权限撤销、显示器断开时返回 Result 失败。
-- 不使用废弃 CGWindowList 截图作为主路径。
+- [ ] `PrimaryScreen` / 指定 `Screen` / 指定 `Region`。
+- [ ] 使用 ScreenCaptureKit/SCScreenshotManager。
+- [x] 输出 BGRA32。
+- [x] 修正行方向、stride 和 alpha。
+- [x] 保持实际物理像素尺寸（`MacDisplayGeometry` 已提供换算，见 9.1）。
+- [ ] 排除 EasyChat overlay。
+- [ ] 屏幕锁定、权限撤销、显示器断开时返回 Result 失败。
+- [x] 不使用废弃 CGWindowList 截图作为主路径。
+
+**已完成并验证的部分：像素管线。** `ImageEncodingNative.CreateImage` / `ReadBgra32` 负责 `CGImage ↔ BGRA32` 的双向转换，这是截图里**真正容易出错**的地方——通道顺序搞反、行方向翻转、stride 没去 padding，产出的图看起来仍然像一张截图，只有 OCR 质量会暴露问题。因此这三点是用已知字节逐位断言的，不靠肉眼：
+
+- 逐字节往返一致（通道顺序）。
+- 每行填入不同值，断言内存第一行就是图像顶部（行方向）。
+- 输入带 16 字节行填充，断言读回是紧凑排列（stride 归一化）。
+
+读回刻意走「画进自己指定格式的 bitmap context」而不是直接读源图的 data provider：采集到的图可能是任意色彩空间、任意 alpha 排布、任意行填充，画一次就全部归一化。
+
+**块（block）机制已独立验证。** 所有异步 Apple API（麦克风授权、ScreenCaptureKit）都靠手工构造的 global block 回调。此前只验证了它的头部布局，本轮补了一个真正的调用验证：把 block 交给 `-[NSArray enumerateObjectsUsingBlock:]`，断言运行时确实按元素回调并传入正确下标——这条路不需要任何隐私授权。isa / flags / descriptor / invoke 四项至此全部经过真实调用。
+
+**未实现的部分与原因：采集步骤无法在本机验证。** `CGPreflightScreenCaptureAccess()` 在测试宿主上返回 `false`，即终端未被授予屏幕录制。ScreenCaptureKit 的六个类（`SCShareableContent`、`SCContentFilter`、`SCStreamConfiguration`、`SCScreenshotManager`、`SCDisplay`、`SCWindow`）已确认在 macOS 26 上全部存在，但在没有授权的情况下写下约三百行只能靠推理的 Objective-C 对象图，其正确性无从检验，而**一旦授权就能真机验收**。因此采集步骤留待授权后落地，而不是先写一堆验证不了的代码。
+
+授权后需要验证的点：`SCScreenshotManager` 返回图的实际像素尺寸是否等于 `ScreenDescriptor.Bounds`（这直接对应阶段门槛的「Retina 像素对齐」）、`SCContentFilter` 排除 EasyChat 窗口是否生效、以及权限被撤销/显示器断开时是否按 `Result` 失败而非返回空图。
 
 #### 9.3 截图 Session 与 worker
 

@@ -53,7 +53,32 @@ internal static partial class ImageEncodingNative
         int intent);
 
     [LibraryImport(CoreGraphicsPath)]
-    private static partial void CGImageRelease(IntPtr image);
+    internal static partial void CGImageRelease(IntPtr image);
+
+    [LibraryImport(CoreGraphicsPath)]
+    private static partial nint CGImageGetWidth(IntPtr image);
+
+    [LibraryImport(CoreGraphicsPath)]
+    private static partial nint CGImageGetHeight(IntPtr image);
+
+    [LibraryImport(CoreGraphicsPath)]
+    private static partial IntPtr CGBitmapContextCreate(
+        IntPtr data,
+        nint width,
+        nint height,
+        nint bitsPerComponent,
+        nint bytesPerRow,
+        IntPtr colorSpace,
+        uint bitmapInfo);
+
+    [LibraryImport(CoreGraphicsPath)]
+    private static partial void CGContextDrawImage(
+        IntPtr context,
+        CoreGraphicsRect rect,
+        IntPtr image);
+
+    [LibraryImport(CoreGraphicsPath)]
+    private static partial void CGContextRelease(IntPtr context);
 
     [LibraryImport(ImageIoPath)]
     private static partial IntPtr CGImageDestinationCreateWithData(
@@ -71,6 +96,121 @@ internal static partial class ImageEncodingNative
     [LibraryImport(ImageIoPath)]
     [return: MarshalAs(UnmanagedType.U1)]
     private static partial bool CGImageDestinationFinalize(IntPtr destination);
+
+    /// <summary>
+    /// Wraps BGRA32 pixels in a <c>CGImage</c>. The pixel data is copied, so the caller's buffer is
+    /// free immediately; the returned image must be released with <see cref="CGImageRelease"/>.
+    /// </summary>
+    internal static unsafe IntPtr CreateImage(
+        ReadOnlySpan<byte> pixels,
+        int width,
+        int height,
+        int stride)
+    {
+        IntPtr source = IntPtr.Zero;
+        IntPtr provider = IntPtr.Zero;
+        IntPtr colorSpace = IntPtr.Zero;
+        try
+        {
+            fixed (byte* pointer = pixels)
+            {
+                source = CoreFoundationNative.CFDataCreate(
+                    IntPtr.Zero,
+                    (IntPtr)pointer,
+                    pixels.Length);
+            }
+
+            if (source == IntPtr.Zero)
+                throw new InvalidOperationException("The pixel buffer could not be copied.");
+
+            provider = CGDataProviderCreateWithCFData(source);
+            colorSpace = CGColorSpaceCreateDeviceRGB();
+            if (provider == IntPtr.Zero || colorSpace == IntPtr.Zero)
+                throw new InvalidOperationException("CoreGraphics rejected the pixel buffer.");
+
+            var image = CGImageCreate(
+                width,
+                height,
+                BitsPerComponent,
+                BitsPerPixel,
+                stride,
+                colorSpace,
+                Bgra32BitmapInfo,
+                provider,
+                IntPtr.Zero,
+                false,
+                DefaultRenderingIntent);
+            return image != IntPtr.Zero
+                ? image
+                : throw new InvalidOperationException("CoreGraphics could not build the image.");
+        }
+        finally
+        {
+            if (colorSpace != IntPtr.Zero)
+                CGColorSpaceRelease(colorSpace);
+            if (provider != IntPtr.Zero)
+                CGDataProviderRelease(provider);
+            if (source != IntPtr.Zero)
+                CoreFoundationNative.CFRelease(source);
+        }
+    }
+
+    /// <summary>
+    /// Reads a <c>CGImage</c> back as tightly packed BGRA32.
+    /// </summary>
+    /// <remarks>
+    /// The image is drawn into a bitmap context whose format this method chooses, rather than being
+    /// read through its own data provider. That is deliberate: a captured image can arrive in any
+    /// colour space, alpha arrangement or row padding, and drawing normalises all of it in one step.
+    /// A bitmap context lays its rows out top first, which is the order the contract's
+    /// <c>ImageFrame</c> expects.
+    /// </remarks>
+    internal static unsafe byte[] ReadBgra32(IntPtr image, out int width, out int height, out int stride)
+    {
+        width = (int)CGImageGetWidth(image);
+        height = (int)CGImageGetHeight(image);
+        if (width <= 0 || height <= 0)
+            throw new InvalidOperationException("The captured image has no pixels.");
+
+        stride = checked(width * 4);
+        var pixels = new byte[checked(stride * height)];
+        IntPtr colorSpace = IntPtr.Zero;
+        IntPtr context = IntPtr.Zero;
+        try
+        {
+            colorSpace = CGColorSpaceCreateDeviceRGB();
+            if (colorSpace == IntPtr.Zero)
+                throw new InvalidOperationException("CoreGraphics rejected the colour space.");
+
+            fixed (byte* buffer = pixels)
+            {
+                context = CGBitmapContextCreate(
+                    (IntPtr)buffer,
+                    width,
+                    height,
+                    BitsPerComponent,
+                    stride,
+                    colorSpace,
+                    Bgra32BitmapInfo);
+                if (context == IntPtr.Zero)
+                    throw new InvalidOperationException("The bitmap context could not be created.");
+
+                CGContextDrawImage(
+                    context,
+                    new CoreGraphicsRect { X = 0, Y = 0, Width = width, Height = height },
+                    image);
+            }
+
+            return pixels;
+        }
+        finally
+        {
+            if (context != IntPtr.Zero)
+                CGContextRelease(context);
+            if (colorSpace != IntPtr.Zero)
+                CGColorSpaceRelease(colorSpace);
+        }
+    }
 
     /// <summary>
     /// Encodes BGRA32 pixels as PNG, or throws with the stage that failed. The caller owns the
