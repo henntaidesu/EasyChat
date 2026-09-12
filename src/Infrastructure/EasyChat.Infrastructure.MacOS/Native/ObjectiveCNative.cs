@@ -85,6 +85,14 @@ internal static partial class ObjectiveCNative
         IntPtr first,
         IntPtr second);
 
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial void Send(
+        IntPtr receiver,
+        IntPtr selector,
+        IntPtr first,
+        IntPtr second,
+        IntPtr third);
+
     /// <summary>
     /// Opens an autorelease pool. Objective-C APIs answer autoreleased objects and a .NET thread
     /// carries no pool of its own, so a block of message sends that is not bracketed by one leaks

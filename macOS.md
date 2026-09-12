@@ -990,18 +990,20 @@ Safari、Chrome、TextEdit、Word、VS Code 至少五类应用通过单击、拖
 
 #### 9.2 ScreenCapture
 
-**状态：像素管线已完成并验证；采集步骤未实现（2026-09-12）**
+**状态：代码完成，采集路径未经真机验证（2026-09-12）**
 
 实现 `MacScreenCapture`：
 
-- [ ] `PrimaryScreen` / 指定 `Screen` / 指定 `Region`。
-- [ ] 使用 ScreenCaptureKit/SCScreenshotManager。
+- [x] `PrimaryScreen` / 指定 `Screen` / 指定 `Region`。
+- [x] 使用 ScreenCaptureKit/SCScreenshotManager。
 - [x] 输出 BGRA32。
 - [x] 修正行方向、stride 和 alpha。
-- [x] 保持实际物理像素尺寸（`MacDisplayGeometry` 已提供换算，见 9.1）。
-- [ ] 排除 EasyChat overlay。
-- [ ] 屏幕锁定、权限撤销、显示器断开时返回 Result 失败。
+- [x] 保持实际物理像素尺寸（`MacDisplayGeometry` 提供换算，见 9.1）。
+- [x] 排除 EasyChat overlay（`SCContentFilter` 排除 owner pid 为本进程的窗口）。
+- [x] 屏幕锁定、权限撤销、显示器断开时返回 Result 失败。
 - [x] 不使用废弃 CGWindowList 截图作为主路径。
+
+**⚠️ 采集路径未经真机验证。** 见下方「验证状态」。
 
 **已完成并验证的部分：像素管线。** `ImageEncodingNative.CreateImage` / `ReadBgra32` 负责 `CGImage ↔ BGRA32` 的双向转换，这是截图里**真正容易出错**的地方——通道顺序搞反、行方向翻转、stride 没去 padding，产出的图看起来仍然像一张截图，只有 OCR 质量会暴露问题。因此这三点是用已知字节逐位断言的，不靠肉眼：
 
@@ -1013,9 +1015,29 @@ Safari、Chrome、TextEdit、Word、VS Code 至少五类应用通过单击、拖
 
 **块（block）机制已独立验证。** 所有异步 Apple API（麦克风授权、ScreenCaptureKit）都靠手工构造的 global block 回调。此前只验证了它的头部布局，本轮补了一个真正的调用验证：把 block 交给 `-[NSArray enumerateObjectsUsingBlock:]`，断言运行时确实按元素回调并传入正确下标——这条路不需要任何隐私授权。isa / flags / descriptor / invoke 四项至此全部经过真实调用。
 
-**未实现的部分与原因：采集步骤无法在本机验证。** `CGPreflightScreenCaptureAccess()` 在测试宿主上返回 `false`，即终端未被授予屏幕录制。ScreenCaptureKit 的六个类（`SCShareableContent`、`SCContentFilter`、`SCStreamConfiguration`、`SCScreenshotManager`、`SCDisplay`、`SCWindow`）已确认在 macOS 26 上全部存在，但在没有授权的情况下写下约三百行只能靠推理的 Objective-C 对象图，其正确性无从检验，而**一旦授权就能真机验收**。因此采集步骤留待授权后落地，而不是先写一堆验证不了的代码。
+**验证状态（2026-09-12，经用户确认「先写下来，验证留到以后」）**
 
-授权后需要验证的点：`SCScreenshotManager` 返回图的实际像素尺寸是否等于 `ScreenDescriptor.Bounds`（这直接对应阶段门槛的「Retina 像素对齐」）、`SCContentFilter` 排除 EasyChat 窗口是否生效、以及权限被撤销/显示器断开时是否按 `Result` 失败而非返回空图。
+`CGPreflightScreenCaptureAccess()` 在测试宿主上返回 `false`——终端未被授予屏幕录制。ScreenCaptureKit 的六个类（`SCShareableContent`、`SCContentFilter`、`SCStreamConfiguration`、`SCScreenshotManager`、`SCDisplay`、`SCWindow`）已确认在 macOS 26 上全部存在，代码已按其对象图写完，但**没有一次真实截图跑通过**。
+
+| 部分 | 验证状态 |
+| --- | --- |
+| block 回调机制 | ✅ 真实调用验证（`NSArray enumerateObjectsUsingBlock:`） |
+| `CGImage ↔ BGRA32` 像素管线 | ✅ 已知字节逐位验证（通道序、行方向、stride 归一化） |
+| 显示器几何与区域换算 | ✅ 真机验证（9.1） |
+| 无授权时返回明确失败 | ✅ 真机验证 |
+| **ScreenCaptureKit 对象图与真实采集** | ❌ **未验证** |
+
+授权后必须补验的点：
+
+1. `SCScreenshotManager` 返回图的实际像素尺寸是否等于 `ScreenDescriptor.Bounds`——直接对应阶段门槛的「Retina 像素对齐」。
+2. `setSourceRect:` 传 `CGRect`（arm64 上是 4 个 double 的 HFA，走浮点寄存器）是否被正确编组；这是整段代码里 ABI 风险最高的一处。
+3. `SCContentFilter` 排除 EasyChat 窗口是否真的生效。
+4. 权限运行中被撤销、显示器断开、屏幕锁定时是否按 `Result` 失败而非返回空图或半张图。
+
+设计上的两个取舍：
+
+- **不保留 `CGDisplayCreateImage` 兜底**。它在 macOS 26 上仍可用，但已被 Apple 取代；为「唯一一个像素保真度直接决定 OCR 质量」的功能维护两套采集路径、两套像素行为，不划算。
+- **跨显示器的区域请求直接失败**而不是截一部分：这样的区域在 macOS 的点空间里没有单一表示，截半张图比明确报错更糟。
 
 #### 9.3 截图 Session 与 worker
 

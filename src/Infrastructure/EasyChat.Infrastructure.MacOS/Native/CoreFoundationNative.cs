@@ -37,6 +37,9 @@ internal static partial class CoreFoundationNative
     [LibraryImport(LibraryPath)]
     internal static partial void CFRelease(IntPtr reference);
 
+    [LibraryImport(LibraryPath)]
+    internal static partial IntPtr CFRetain(IntPtr reference);
+
     /// <summary>Creates an immutable copy of <paramref name="bytes"/>.</summary>
     [LibraryImport(LibraryPath)]
     internal static partial IntPtr CFDataCreate(IntPtr allocator, IntPtr bytes, nint length);
