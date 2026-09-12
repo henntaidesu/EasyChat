@@ -813,28 +813,46 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 预计：4～6 人日。
 
+**状态：进行中（2026-09-12）**
+
+已完成 `MacGlobalHotkeys` 与 `MacKeyboardState`；`MacPointerPosition` 与 `MacGlobalPointerMonitor` 依赖显示器几何换算（阶段 9），见下。
+
 #### 实现
 
-- `MacGlobalHotkeys`
-- `MacGlobalPointerMonitor`
-- `MacPointerPosition`
-- `MacKeyboardState`
+- [x] `MacGlobalHotkeys`
+- [ ] `MacGlobalPointerMonitor`
+- [ ] `MacPointerPosition`
+- [x] `MacKeyboardState`
+
+**为什么两个指针端口要等阶段 9**：契约里的 `PhysicalScreenPoint` 是「统一桌面**物理像素**」，而 CoreGraphics 的全局坐标（`CGEventGetLocation`、`CGDisplayBounds`）是**点**（逻辑单位）。两者之间的换算需要每块显示器的 backing scale factor，也就是阶段 9 的 `IScreenCatalog` / `ScreenDescriptor` 要建立的那张表。现在自己搭一套换算等于把阶段 9 的活先做一遍再扔掉，所以指针端口顺延，与 `MacDisplayGeometry` 一起落地。
 
 #### 快捷键
 
 要求支持：
 
-- 普通注册。
-- 冲突探测。
-- 注销。
-- Command/Option/Control/Shift。
-- 功能键。
-- OEM/符号键。
-- 多个快捷键并存。
-- 同声传译的按下和释放回调。
-- 应用隐藏时触发。
-- 用户注销/睡眠/唤醒后恢复。
-- 输入法切换后仍按物理按键匹配。
+- [x] 普通注册。
+- [x] 冲突探测（`ProbeAsync` 注册后立即释放——这是 macOS 唯一会告诉你组合是否被占用的方式）。
+- [x] 注销。
+- [x] Command/Option/Control/Shift。
+- [x] 功能键。
+- [x] OEM/符号键（`Equal`、`Minus`、`LeftBracket`、`Semicolon`、`Comma`、`Grave` 等已在键表内）。
+- [x] 多个快捷键并存。
+- [x] 同声传译的按下和释放回调（`kEventHotKeyPressed` / `kEventHotKeyReleased`）。
+- [x] 应用隐藏时触发。
+- [x] 用户注销/睡眠/唤醒后恢复。
+- [x] 输入法切换后仍按物理按键匹配。
+
+**选 Carbon 而不是 CGEventTap 的理由**：`RegisterEventHotKey` **完全不需要任何隐私授权**，而 event tap 在拿到输入监视授权前一个键都收不到。Carbon 还是按虚拟键码（物理键位）注册的，所以「切换输入法后仍按物理按键匹配」是这条路径的自然属性而不是额外实现；注册登记在窗口服务器里而不是本进程持有的事件流上，所以隐藏、后台、睡眠唤醒后都继续有效。
+
+Carbon 事件派发在**主线程 run loop** 上。因此回调里只做一件事：把托管工作丢给线程池后立即返回——否则一次慢翻译会卡住应用正在等的所有其他事件。回调抛出的异常被吞掉并隔离，一个失败的动作不能连累其余快捷键的处理器。
+
+不是 EasyChat 注册的热键返回 `eventNotHandledErr`，让事件继续沿处理器链传递，而不是被我们吞掉。
+
+真机验证：`MacGlobalHotkeysTests` 在真实窗口服务器上注册（用四个修饰键 + 功能键的组合，且用完立即注销，不会劫持开发者已绑定的快捷键），覆盖注册/注销/重复注销/三个快捷键并存/探测后不占用/按住式双边注册，以及重复注册同一组合确实返回 `eventHotKeyExistsErr` 并被映射成 `hotkey.conflict`。回调触发本身需要主线程 run loop，测试宿主没有，留到阶段 8 真机验收。
+
+#### 键盘状态
+
+`MacKeyboardState` 用 `CGEventSourceKeyState` 读取按键当前是否按下——读的是会话合并状态而不是事件流，因此不需要 event tap。契约里 side-agnostic 的 Control/Alt/Shift 两侧任一按下即为 true，Command 保留契约要求的左右区分。
 
 #### 鼠标监听
 
@@ -858,6 +876,8 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 #### 阶段门槛
 
 所有现有快捷键动作可触发，按住式同声传译释放事件可靠，鼠标监听不造成系统输入延迟。
+
+**门槛状态：未达成。** 快捷键的注册侧已在真机验证，但「可触发」和「释放事件可靠」要在主线程 run loop 下才能验收，即阶段 8 的真机链路；鼠标监听尚未实现。
 
 ### 阶段 8：划词工具栏完整链路
 

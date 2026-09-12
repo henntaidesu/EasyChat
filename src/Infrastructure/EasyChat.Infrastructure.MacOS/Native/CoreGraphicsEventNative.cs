@@ -50,6 +50,20 @@ internal static partial class CoreGraphicsEventNative
     [LibraryImport(LibraryPath)]
     private static partial void CGEventPost(int tap, IntPtr handle);
 
+    [LibraryImport(LibraryPath)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    private static partial bool CGEventSourceKeyState(int stateId, ushort virtualKey);
+
+    /// <summary>
+    /// Whether a key is physically down right now. This reads the combined session state rather than
+    /// an event stream, so it needs no event tap.
+    /// </summary>
+    internal static bool IsKeyDown(ushort virtualKey) =>
+        CGEventSourceKeyState(CombinedSessionState, virtualKey);
+
+    /// <summary>Value of <c>kCGEventSourceStateCombinedSessionState</c>.</summary>
+    private const int CombinedSessionState = 0;
+
     /// <summary>Presses and releases <paramref name="virtualKey"/> with the given modifiers held.</summary>
     internal static void SendKey(ushort virtualKey, EventModifiers modifiers)
     {

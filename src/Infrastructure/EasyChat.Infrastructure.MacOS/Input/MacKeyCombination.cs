@@ -52,6 +52,45 @@ internal static class MacKeyCombination
         _ => throw new ArgumentOutOfRangeException(nameof(command), command, null)
     };
 
+    /// <summary>
+    /// Resolves a recorded gesture to a macOS keystroke. The key name travels as the same string on
+    /// both platforms, so the shared table is the only place that has to know the macOS positions.
+    /// </summary>
+    internal static bool TryResolve(ShortcutGesture gesture, out MacKeystroke keystroke)
+    {
+        keystroke = default;
+        if (gesture is null || !Keys.TryGetValue(gesture.Key, out var virtualKey))
+            return false;
+
+        var modifiers = EventModifiers.None;
+        if (gesture.Modifiers.HasFlag(ShortcutModifiers.Control))
+            modifiers |= EventModifiers.Control;
+        if (gesture.Modifiers.HasFlag(ShortcutModifiers.Alt))
+            modifiers |= EventModifiers.Option;
+        if (gesture.Modifiers.HasFlag(ShortcutModifiers.Shift))
+            modifiers |= EventModifiers.Shift;
+        if (gesture.Modifiers.HasFlag(ShortcutModifiers.Meta))
+            modifiers |= EventModifiers.Command;
+
+        keystroke = new MacKeystroke(virtualKey, modifiers);
+        return true;
+    }
+
+    /// <summary>Translates the CoreGraphics modifier mask into the Carbon one.</summary>
+    internal static CarbonModifiers ToCarbon(EventModifiers modifiers)
+    {
+        var carbon = CarbonModifiers.None;
+        if (modifiers.HasFlag(EventModifiers.Control))
+            carbon |= CarbonModifiers.Control;
+        if (modifiers.HasFlag(EventModifiers.Option))
+            carbon |= CarbonModifiers.Option;
+        if (modifiers.HasFlag(EventModifiers.Shift))
+            carbon |= CarbonModifiers.Shift;
+        if (modifiers.HasFlag(EventModifiers.Command))
+            carbon |= CarbonModifiers.Command;
+        return carbon;
+    }
+
     internal static bool TryParse(string combination, out MacKeystroke keystroke)
     {
         keystroke = default;

@@ -30,6 +30,10 @@ public static class MacOSInfrastructureServiceCollectionExtensions
         services.AddSingleton<IRunningProcessCatalog, MacRunningProcessCatalog>();
         services.AddSingleton<ITextSelection, MacTextSelection>();
         services.AddSingleton<ITextDelivery, MacTextDelivery>();
+        services.AddSingleton<MacGlobalHotkeys>();
+        services.AddSingleton<IGlobalHotkeys>(provider => provider.GetRequiredService<MacGlobalHotkeys>());
+        services.AddSingleton<IHoldGlobalHotkeys>(provider => provider.GetRequiredService<MacGlobalHotkeys>());
+        services.AddSingleton<IKeyboardState, MacKeyboardState>();
         return services;
     }
 }
