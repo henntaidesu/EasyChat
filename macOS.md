@@ -1233,8 +1233,8 @@ ONNX Runtime native OK. providers: [CoreMLExecutionProvider, WebGpuExecutionProv
 #### 本阶段进度（2026-09-12）
 
 - [x] 12.1 音频源目录与 token（`MacAudioCaptureSourceCatalog`、`MacAudioSourceTokens`）——真机验证。
-- [ ] 12.2 系统与应用音频（ScreenCaptureKit）——**采集未实现**，所需的运行时 delegate 机制已构建并独立验证，见下。
-- [ ] 12.3 麦克风采集（AVFoundation/CoreAudio）——**采集未实现**，设备枚举已完成。
+- [ ] 12.2 系统与应用音频（ScreenCaptureKit）——**采集未实现**，明确返回「尚未实现」而非静音；所需的运行时 delegate 机制已构建并独立验证，见下。
+- [x] 12.3 麦克风采集（`AudioQueue`）——已实现，见下。
 - [x] 12.4 编排与格式转换（`MacPcmAudioCapture`、`PcmAudioConversion`）——纯托管、完整测试。
 - [x] 12.5 复用 MicroASR——无需任何 macOS 适配（见上）。
 
@@ -1262,9 +1262,21 @@ ScreenCaptureKit 的音频输出**只通过 delegate 协议投递，没有 block
 
 剩下的是把这套机制接到 `SCStream` / `SCStreamConfiguration`（音频部分）和麦克风采集上。两者都需要相应授权才能真机验证，与 9.2 同一限制。
 
-关于麦克风路径的一点判断：`AudioQueueNewInput` 是**纯 C API**，回调是普通函数指针，比 `AVCaptureSession` 的 delegate 协议简单得多，应优先考虑。
+#### 12.3 麦克风：选 AudioQueue 的理由
 
-**`IPcmAudioCapture` 目前仍未注册**：注册它只会把 `--verify-composition` 的缺失项从 `IPcmAudioCapture` 换成内部的 `IMacAudioSourceFactory`，既没有改善也更难读。等采集落地后一并注册。
+`AudioQueueNewInput` 是**纯 C API**，回调是普通函数指针，不需要运行时构造 delegate 对象——比 `AVCaptureSession` 简单得多。
+
+更重要的一点：**向 AudioQueue 直接申请识别器要的格式（16 kHz 单声道 16 位），CoreAudio 自己完成采样率与声道转换**。这不只是少写代码——设备在会话中途改变采样率时它依然工作，而 AirPods 在听/录模式切换时正是会这样。因此麦克风路径不需要走 `PcmAudioConversion`。
+
+传 null 作为回调 run loop，AudioQueue 会用自己的线程派发回调——线程池线程上本来就没有 run loop 可借。回调里只做三件事：拷走音频、丢进 channel、立刻把缓冲还给队列；占着缓冲会让录制无处可写。
+
+`DisposeAsync` 先同步 `AudioQueueStop` 再 `AudioQueueDispose`，确保没有回调还在对一个即将释放的队列执行。
+
+打开设备的任何一步失败都**如实报错**，而不是返回一个只产出静音的流——安静的房间和没启动的采集，从静音上分辨不出来。
+
+**`IPcmAudioCapture` 与 `IPreparablePcmAudioCapture` 已注册。** `--verify-composition` 的缺失端口降到 4 个，且**全部属于挂起的 OCR 与图片清除阶段**——所有不受 OCR 决策阻塞的平台端口至此全部就位。
+
+系统与应用音频源在打开时抛出明确的「尚未实现」，而不是返回空流：返回空流会让工作流什么都不报告，用户只看到一片安静。
 
 **源目录不需要任何授权**：设备枚举、设备名、通道布局对任何进程开放，只有真正取样才受限。应用列表复用与划词选择器同一套 workspace 查询。因此源选择器在 EasyChat 向用户要任何权限之前就能填好。
 
@@ -1800,7 +1812,11 @@ macOS 集成测试包括：
 
 ### 本次会话遗留的技术债
 
-- `SubtitleSessionCoordinatorTests.FailedStructuredRetryRestoresAnExactSourceTranslationSnapshot` 偶发超时，去掉 `continue-on-error` 后会真的挡住 CI，需要单独 triage（Application 层，与本适配无关）。
+- **偶发失败的用例是 `SubtitleSessionCoordinatorTests.IdenticalFinalDoesNotRestartTtlAfterQuietTranslationCompleted`**（5 次连跑中失败 1 次，已用 trx 抓到具体名字）。
+
+  **更正**：`CLAUDE.md` 记录的是同一测试类中的另一个用例 `FailedStructuredRetryRestoresAnExactSourceTranslationSnapshot`「在 macOS 上可复现超时」。本次会话中**那个用例每次都通过**，实际偶发失败的是上面这个。此前几轮我只说「与已记录的特征吻合」而未核实名字，是推断不是事实——现已核实并更正。
+
+  性质：该测试用虚拟时钟推进协调器的定时器（`harness.Time.Advance`），同时用 `WaitForAsync` / `DrainAsync` 轮询真实的异步事件泵。虚拟时间与真实并发混用时，时钟推进可能先于事件处理完全落定，TTL 记账便会落在不同分支。属 Application 层字幕时序问题，与 macOS 适配无关，去掉 `continue-on-error` 后会真的挡住 CI，需要单独 triage。
 - 快捷键录制取 `e.Key`（布局映射）而热键按物理键码注册，非 US 布局可能不一致；Windows 侧同样存在，属跨平台既有行为。
 - `ScreenshotWorkerProtocol` 在两个 Host 各存一份，因为 Host 之间不允许互相引用。
 

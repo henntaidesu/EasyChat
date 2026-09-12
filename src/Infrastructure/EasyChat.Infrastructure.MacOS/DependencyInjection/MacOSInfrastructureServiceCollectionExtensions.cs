@@ -43,6 +43,10 @@ public static class MacOSInfrastructureServiceCollectionExtensions
         services.AddSingleton<IAudioPlaybackDeviceCatalog, MacAudioPlaybackDeviceCatalog>();
         services.AddSingleton<IAudioPlaybackQueue, MacAudioPlaybackQueue>();
         services.AddSingleton<IAudioFeedbackCuePlayer, MacAudioFeedbackCuePlayer>();
+        services.AddSingleton<IMacAudioSourceFactory, MacAudioSourceFactory>();
+        services.AddSingleton<MacPcmAudioCapture>();
+        services.AddSingleton<IPcmAudioCapture>(provider => provider.GetRequiredService<MacPcmAudioCapture>());
+        services.AddSingleton<IPreparablePcmAudioCapture>(provider => provider.GetRequiredService<MacPcmAudioCapture>());
         services.AddSingleton<IGlobalPointerMonitor, MacGlobalPointerMonitor>();
         services.AddSingleton<ISelectedTextCapture, MacSelectedTextCapture>();
         return services;
