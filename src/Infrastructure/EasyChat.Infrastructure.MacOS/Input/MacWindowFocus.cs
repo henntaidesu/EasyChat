@@ -14,7 +14,7 @@ namespace EasyChat.Infrastructure.MacOS.Input;
 /// keyboard focus. Without Accessibility approval that query fails rather than falling back to the
 /// frontmost application, because the two differ exactly when it matters.
 /// </remarks>
-internal sealed class MacWindowFocus : IWindowFocus
+public sealed class MacWindowFocus : IWindowFocus
 {
     private static readonly TimeSpan ActivationPollInterval = TimeSpan.FromMilliseconds(50);
     private const int ActivationAttempts = 10;

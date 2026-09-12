@@ -12,7 +12,7 @@ namespace EasyChat.Infrastructure.MacOS.Input;
 /// cached: a display can be attached, detached or rescaled between two readings, and a stale scale
 /// would place the pointer on the wrong part of the desktop.
 /// </remarks>
-internal sealed class MacPointerPosition : IPointerPosition
+public sealed class MacPointerPosition : IPointerPosition
 {
     public PhysicalScreenPoint GetCurrent()
     {

@@ -1041,14 +1041,28 @@ Safari、Chrome、TextEdit、Word、VS Code 至少五类应用通过单击、拖
 
 #### 9.3 截图 Session 与 worker
 
+**状态：已完成（2026-09-12），握手链路已真机验证**
+
 在 Mac Host 实现：
 
-- `MacScreenshotCaptureSession`
-- `MacScreenshotWorker`
+- [x] `MacScreenshotCaptureSession`
+- [x] `MacScreenshotWorker`
 
-保留当前 worker 隔离目的：截图大缓冲、Avalonia overlay 资源、OCR 前图像，并在 worker 完成后回收内存。
+- [x] 保留当前 worker 隔离目的：截图大缓冲、Avalonia overlay 资源、OCR 前图像，并在 worker 完成后回收内存。
+- [x] IPC 用 Unix domain socket。
+- [x] worker 直接运行同一 bundle executable 的 worker mode，不创建第二个 Dock 应用实例。
 
-IPC 推荐 Unix domain socket，或已验证可在 macOS 使用的匿名/命名管道。worker 直接运行同一 bundle executable 的 worker mode，不创建第二个 Dock 应用实例。
+**隔离的理由是内存而不只是崩溃**：一张全桌面 Retina 帧约 20 MB，长截图是它的若干倍。让 helper 退出等于把这些内存直接还给系统，而不是留在主进程堆里熬完整个会话。因此 session 在拿到应答后**立即退役 worker** 而不是留着热身——留着就等于留住了这套设计本来要释放的那些缓冲。
+
+**不创建第二个 Dock 图标**：activation policy 来自共享的 Info.plist，运行时只能收窄不能放宽，所以 worker 启动后立刻调用 `[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory]`（封装为 `MacApplicationPresentation.TryHideFromDock`）。该调用已在真机上验证返回成功。
+
+**socket 路径刻意放在临时目录并保持短**：平台对 Unix socket 路径有一百余字节的硬上限，完整的 Application Support 路径可能超出。
+
+协议按 Windows 的框架**复刻**而非共享：两个 Host 不允许互相引用，且各自只和自己可执行文件产出的 worker 对话，版本号从来不需要一致。代价是两份小体量的帧格式代码。
+
+**真机验证（2026-09-12）**：用一个临时监听端启动 `EasyChat --screenshot-worker <socket>`，确认同一可执行文件以 worker 模式重新拉起、Unix socket 连通、Avalonia 在 worker 中完成启动、Dock 抑制未导致崩溃，并收到正确的 Ready 帧（`magic=0x50414353 version=4 message=0`）。这条链路里风险最高的「同一 bundle 起第二个 Avalonia 进程」至此得到确认。
+
+**仍未验证**：真正的选区与采集（依赖屏幕录制授权，见 9.2 的验证状态表），以及 Dock 图标是否确实不出现（需要目视确认，`setActivationPolicy:` 返回成功只是必要条件）。
 
 #### 9.4 长截图
 

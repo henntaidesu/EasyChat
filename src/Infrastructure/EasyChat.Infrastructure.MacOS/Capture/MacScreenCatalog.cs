@@ -6,7 +6,7 @@ namespace EasyChat.Infrastructure.MacOS.Capture;
 /// Reports the desktop's displays in the contract's unified physical pixel space, with an effective
 /// DPI of 96 multiplied by each display's backing scale.
 /// </summary>
-internal sealed class MacScreenCatalog : IScreenCatalog
+public sealed class MacScreenCatalog : IScreenCatalog
 {
     public ValueTask<IReadOnlyList<ScreenDescriptor>> GetScreensAsync(
         CancellationToken cancellationToken = default)

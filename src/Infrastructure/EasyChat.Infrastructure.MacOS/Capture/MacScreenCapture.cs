@@ -21,7 +21,7 @@ namespace EasyChat.Infrastructure.MacOS.Capture;
 /// operation at a time, so a queue is honest about the real usage rather than a limitation.
 /// </para>
 /// </remarks>
-internal sealed class MacScreenCapture(ILogger<MacScreenCapture> logger) : IScreenCapture
+public sealed class MacScreenCapture(ILogger<MacScreenCapture> logger) : IScreenCapture
 {
     private static readonly TimeSpan CaptureTimeout = TimeSpan.FromSeconds(10);
 

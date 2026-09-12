@@ -12,7 +12,7 @@ namespace EasyChat.Infrastructure.MacOS.Input;
 /// side-agnostic Control, Alt and Shift, while Command keeps the left and right distinction the
 /// contract asks for.
 /// </remarks>
-internal sealed class MacKeyboardState : IKeyboardState
+public sealed class MacKeyboardState : IKeyboardState
 {
     /// <summary>Virtual key codes from HIToolbox, by physical position.</summary>
     private const ushort LeftShift = 56;
