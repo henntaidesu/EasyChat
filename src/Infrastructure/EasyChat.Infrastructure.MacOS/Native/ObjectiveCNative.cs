@@ -96,6 +96,24 @@ internal static partial class ObjectiveCNative
         IntPtr second,
         IntPtr third);
 
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    internal static partial IntPtr SendReturningHandle(
+        IntPtr receiver,
+        IntPtr selector,
+        IntPtr first,
+        IntPtr second,
+        IntPtr third);
+
+    [LibraryImport(LibraryPath, EntryPoint = "objc_msgSend")]
+    [return: MarshalAs(UnmanagedType.U1)]
+    internal static partial bool SendReturningBool(
+        IntPtr receiver,
+        IntPtr selector,
+        IntPtr first,
+        IntPtr second,
+        IntPtr third,
+        IntPtr fourth);
+
     /// <summary>
     /// Opens an autorelease pool. Objective-C APIs answer autoreleased objects and a .NET thread
     /// carries no pool of its own, so a block of message sends that is not bracketed by one leaks

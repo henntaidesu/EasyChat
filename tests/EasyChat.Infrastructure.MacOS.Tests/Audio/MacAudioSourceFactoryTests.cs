@@ -15,27 +15,31 @@ public sealed class MacAudioSourceFactoryTests
     private static readonly PcmAudioFormat Format = PcmAudioFormat.SpeechRecognition;
 
     [TestMethod]
-    public async Task SystemAudioSaysItIsNotImplementedRatherThanGoingSilent()
+    public async Task SystemAudioNamesTheMissingApprovalRatherThanGoingSilent()
     {
-        // Silence from a microphone and silence from a capture that never started look the same to
-        // the user, so the unimplemented source has to announce itself.
-        // OpenAsync rejects an unsupported source before returning a task, so the call itself has
-        // to be inside the assertion.
-        var failure = await Assert.ThrowsExactlyAsync<NotSupportedException>(async () =>
+        if (ScreenCaptureAccessNative.HasAccess())
+        {
+            Assert.Inconclusive("The host can record the screen, so this would start a real capture.");
+            return;
+        }
+
+        // Silence from a quiet room and silence from a capture that never started look the same to
+        // the user, so a refused capture has to say which approval is missing.
+        var failure = await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
             await new MacAudioSourceFactory().OpenAsync(
                 new MacAudioSource(AudioCaptureSourceKind.SystemOutput, string.Empty),
                 Format,
                 CancellationToken.None));
 
-        StringAssert.Contains(failure.Message, "system audio");
+        StringAssert.Contains(failure.Message, "Screen Recording");
     }
 
     [TestMethod]
-    public async Task ApplicationAudioSaysItIsNotImplemented()
+    public async Task AnApplicationSourceWithoutAProcessIsRejected()
     {
-        await Assert.ThrowsExactlyAsync<NotSupportedException>(async () =>
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
             await new MacAudioSourceFactory().OpenAsync(
-                new MacAudioSource(AudioCaptureSourceKind.Application, "1234"),
+                new MacAudioSource(AudioCaptureSourceKind.Application, "not-a-pid"),
                 Format,
                 CancellationToken.None));
     }
@@ -56,11 +60,17 @@ public sealed class MacAudioSourceFactoryTests
     [TestMethod]
     public async Task AnUnavailableSourceEndsTheCaptureInsteadOfYieldingNothing()
     {
+        if (ScreenCaptureAccessNative.HasAccess())
+        {
+            Assert.Inconclusive("The host can record the screen, so this would start a real capture.");
+            return;
+        }
+
         var capture = new MacPcmAudioCapture(
             new MacAudioSourceFactory(),
             NullLogger<MacPcmAudioCapture>.Instance);
 
-        await Assert.ThrowsExactlyAsync<NotSupportedException>(async () =>
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
         {
             await foreach (var _ in capture.CaptureAsync(
                                [MacAudioSourceTokens.ForSystemOutput()],

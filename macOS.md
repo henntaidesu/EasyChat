@@ -1233,7 +1233,7 @@ ONNX Runtime native OK. providers: [CoreMLExecutionProvider, WebGpuExecutionProv
 #### 本阶段进度（2026-09-12）
 
 - [x] 12.1 音频源目录与 token（`MacAudioCaptureSourceCatalog`、`MacAudioSourceTokens`）——真机验证。
-- [ ] 12.2 系统与应用音频（ScreenCaptureKit）——**采集未实现**，明确返回「尚未实现」而非静音；所需的运行时 delegate 机制已构建并独立验证，见下。
+- [x] 12.2 系统与应用音频（ScreenCaptureKit）——已实现，采集路径未经真机验证，见下。
 - [x] 12.3 麦克风采集（`AudioQueue`）——已实现，见下。
 - [x] 12.4 编排与格式转换（`MacPcmAudioCapture`、`PcmAudioConversion`）——纯托管、完整测试。
 - [x] 12.5 复用 MicroASR——无需任何 macOS 适配（见上）。
@@ -1254,13 +1254,25 @@ ONNX Runtime native OK. providers: [CoreMLExecutionProvider, WebGpuExecutionProv
 
 缓冲是**有界且丢弃最旧**的：识别跟不上时有用的是最新的语音，让缓冲无限增长等于把固定延迟换成无限延迟，最终换成进程内存。
 
-#### 12.2/12.3 未实现的部分与已扫清的障碍
+#### 12.2 系统与应用音频
 
-ScreenCaptureKit 的音频输出**只通过 delegate 协议投递，没有 block 版本**，这意味着必须存在一个真正的 Objective-C 类来接收回调。这是此前最大的未知。
+ScreenCaptureKit 的音频输出**只通过 delegate 协议投递，没有 block 版本**，必须存在一个真正的 Objective-C 类来接收回调。这是此前最大的未知。
 
-该机制现已构建并**独立验证**：`ObjectiveCClassBuilder` 在运行时用 `objc_allocateClassPair` / `class_addMethod` / `objc_registerClassPair` 定义类，方法实现是导出为函数指针的托管静态函数。测试创建一个带 `v@:@q` 编码方法的类、实例化、发消息，断言回调触发**且两个参数原样到达**——类型编码写错会破坏调用栈而不是干净失败，所以必须断言参数而不只是断言方法跑了。该测试不需要任何授权。
+该机制已构建并**独立验证**：`ObjectiveCClassBuilder` 在运行时用 `objc_allocateClassPair` / `class_addMethod` / `objc_registerClassPair` 定义类，方法实现是导出为函数指针的托管静态函数。测试创建一个带 `v@:@q` 编码方法的类、实例化、发消息，断言回调触发**且两个参数原样到达**——类型编码写错会破坏调用栈而不是干净失败，所以必须断言参数而不只是断言方法跑了。该测试不需要任何授权。
 
-剩下的是把这套机制接到 `SCStream` / `SCStreamConfiguration`（音频部分）和麦克风采集上。两者都需要相应授权才能真机验证，与 9.2 同一限制。
+落地要点：
+
+- **系统音频 = 覆盖整个显示器的 filter**。ScreenCaptureKit 里「音频」是 filter 所覆盖内容的音频，因此系统级音频用 `initWithDisplay:excludingWindows:`，单应用用 `initWithDisplay:includingApplications:exceptingWindows:` 并只放入目标应用。
+- **`excludesCurrentProcessAudio = YES`**：不设这个，EasyChat 会听见自己合成的语音和字幕并送回识别。
+- **没有纯音频模式**，流必然携带视频。配置成 2×2 帧、队列深度 3，把这部分开销压到接近零，而不是合成并投递整屏画面再立刻丢弃（计划里「无视频需求时仍配置最小化视频开销」即此）。
+- **请求单声道**：投递的是非交错 32 位浮点，单个平面就是一段连续的 float，可直接复制；请求立体声会拿到两个独立平面，还得先交错。
+- **采样率用 ScreenCaptureKit 自己的 48 kHz**，再交给共享的 `PcmAudioConversion` 重采样到识别器的 16 kHz——直接申请 16 kHz 不保证被接受。
+- 采集回调跑在专用的**串行** dispatch queue 上：音频必须保序，并发队列会让两个缓冲同时被处理。
+- 屏幕录制授权**预检**而不是从 ScreenCaptureKit 的模糊错误里反推，用户才能知道缺的是哪一项。
+
+**API 形状已在 macOS 26 上逐一核实**（无需任何授权）：`SCStreamConfiguration` 的 `setCapturesAudio:` / `setExcludesCurrentProcessAudio:` / `setSampleRate:` / `setChannelCount:` / `setQueueDepth:`，`SCContentFilter` 的两个初始化器，`SCStream` 的 `initWithFilter:configuration:delegate:` / `addStreamOutput:type:sampleHandlerQueue:error:` / `startCaptureWithCompletionHandler:` / `stopCaptureWithCompletionHandler:`，`SCRunningApplication.processID` —— **全部存在**。
+
+**仍未验证**：真实采集需要屏幕录制授权，与 9.2 同一限制。授权后需要确认的是运行时行为而非 API 形状：采样是否真按请求的单声道 48 kHz 到达、`excludesCurrentProcessAudio` 是否确实滤掉自身、以及停止时 delegate 的 `stream:didStopWithError:` 是否如期结束枚举。
 
 #### 12.3 麦克风：选 AudioQueue 的理由
 
@@ -1274,9 +1286,7 @@ ScreenCaptureKit 的音频输出**只通过 delegate 协议投递，没有 block
 
 打开设备的任何一步失败都**如实报错**，而不是返回一个只产出静音的流——安静的房间和没启动的采集，从静音上分辨不出来。
 
-**`IPcmAudioCapture` 与 `IPreparablePcmAudioCapture` 已注册。** `--verify-composition` 的缺失端口降到 4 个，且**全部属于挂起的 OCR 与图片清除阶段**——所有不受 OCR 决策阻塞的平台端口至此全部就位。
-
-系统与应用音频源在打开时抛出明确的「尚未实现」，而不是返回空流：返回空流会让工作流什么都不报告，用户只看到一片安静。
+**`IPcmAudioCapture` 与 `IPreparablePcmAudioCapture` 已注册。** `--verify-composition` 的缺失端口为 4 个，且**全部属于挂起的 OCR 与图片清除阶段**——所有不受 OCR 决策阻塞的平台端口至此全部就位。
 
 **源目录不需要任何授权**：设备枚举、设备名、通道布局对任何进程开放，只有真正取样才受限。应用列表复用与划词选择器同一套 workspace 查询。因此源选择器在 EasyChat 向用户要任何权限之前就能填好。
 

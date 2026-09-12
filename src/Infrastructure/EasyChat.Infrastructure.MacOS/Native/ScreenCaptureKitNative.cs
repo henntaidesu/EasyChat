@@ -98,6 +98,88 @@ internal static class ScreenCaptureKitNative
                 ObjectiveCNative.GetSelector("processID"));
     }
 
+    /// <summary>Value of <c>SCStreamOutputTypeAudio</c>.</summary>
+    internal const nint AudioOutputType = 1;
+
+    /// <summary>
+    /// A filter covering everything on a display, which is how system-wide audio is captured: the
+    /// audio a filter yields is the audio of the content it covers.
+    /// </summary>
+    internal static IntPtr CreateDisplayFilter(IntPtr display, IntPtr excludedWindows) =>
+        CreateFilter(display, excludedWindows);
+
+    /// <summary>A filter covering one application, so only that application's audio is captured.</summary>
+    internal static IntPtr CreateApplicationFilter(
+        IntPtr display,
+        IntPtr applications,
+        IntPtr exceptedWindows) =>
+        ObjectiveCNative.SendReturningHandle(
+            ObjectiveCNative.SendReturningHandle(
+                ObjectiveCNative.GetClass("SCContentFilter"),
+                ObjectiveCNative.GetSelector("alloc")),
+            ObjectiveCNative.GetSelector("initWithDisplay:includingApplications:exceptingWindows:"),
+            display,
+            applications,
+            exceptedWindows);
+
+    internal static IntPtr Applications(IntPtr content) =>
+        ObjectiveCNative.SendReturningHandle(
+            content,
+            ObjectiveCNative.GetSelector("applications"));
+
+    internal static int ApplicationProcessIdentifier(IntPtr application) =>
+        ObjectiveCNative.SendReturningInt32(
+            application,
+            ObjectiveCNative.GetSelector("processID"));
+
+    /// <summary>
+    /// A configuration that captures audio and as little video as the API allows.
+    /// </summary>
+    /// <remarks>
+    /// ScreenCaptureKit has no audio-only mode, so a stream always carries video. Asking for a
+    /// two-by-two frame and a shallow queue keeps that cost near zero rather than compositing and
+    /// delivering full screens that are immediately discarded.
+    ///
+    /// One channel is requested deliberately: the delivered planes are non-interleaved, and a single
+    /// plane is a contiguous run of floats that needs no interleaving before conversion.
+    /// </remarks>
+    internal static IntPtr CreateAudioConfiguration(int sampleRateHz)
+    {
+        var configuration = ObjectiveCNative.SendReturningHandle(
+            ObjectiveCNative.SendReturningHandle(
+                ObjectiveCNative.GetClass("SCStreamConfiguration"),
+                ObjectiveCNative.GetSelector("alloc")),
+            ObjectiveCNative.GetSelector("init"));
+        if (configuration == IntPtr.Zero)
+            throw new InvalidOperationException("The capture configuration could not be created.");
+
+        ObjectiveCNative.Send(configuration, ObjectiveCNative.GetSelector("setCapturesAudio:"), true);
+        ObjectiveCNative.Send(configuration, ObjectiveCNative.GetSelector("setSampleRate:"), sampleRateHz);
+        ObjectiveCNative.Send(configuration, ObjectiveCNative.GetSelector("setChannelCount:"), 1);
+
+        // Without this EasyChat would hear its own synthesised speech and subtitles and feed them
+        // back into recognition.
+        ObjectiveCNative.Send(
+            configuration,
+            ObjectiveCNative.GetSelector("setExcludesCurrentProcessAudio:"),
+            true);
+
+        ObjectiveCNative.Send(configuration, ObjectiveCNative.GetSelector("setWidth:"), 2);
+        ObjectiveCNative.Send(configuration, ObjectiveCNative.GetSelector("setHeight:"), 2);
+        ObjectiveCNative.Send(configuration, ObjectiveCNative.GetSelector("setQueueDepth:"), 3);
+        return configuration;
+    }
+
+    internal static IntPtr CreateStream(IntPtr filter, IntPtr configuration, IntPtr streamDelegate) =>
+        ObjectiveCNative.SendReturningHandle(
+            ObjectiveCNative.SendReturningHandle(
+                ObjectiveCNative.GetClass("SCStream"),
+                ObjectiveCNative.GetSelector("alloc")),
+            ObjectiveCNative.GetSelector("initWithFilter:configuration:delegate:"),
+            filter,
+            configuration,
+            streamDelegate);
+
     internal static IntPtr CreateFilter(IntPtr display, IntPtr excludedWindows) =>
         ObjectiveCNative.SendReturningHandle(
             ObjectiveCNative.SendReturningHandle(
