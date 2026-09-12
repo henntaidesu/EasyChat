@@ -340,6 +340,8 @@ Application 中不再包含操作系统专用快捷键名称；Windows 功能测
 
 预计：2～4 人日。
 
+**状态：已完成（2026-09-12）**
+
 #### 3.1 新建项目
 
 ```text
@@ -405,9 +407,52 @@ EasyChat.Infrastructure.MacOS/Native/EasyChatMacNative/
 - Native bridge 有独立 smoke test。
 - 没有原生类型越过 platform assembly。
 
+#### 与原计划的偏差：原生桥的形态
+
+3.2 原设想编译一个独立的 `EasyChatMacNative` C 动态库。实际落地时改为 **C# 直接 `LibraryImport` 系统框架的稳定 C ABI**，理由是本阶段和阶段 4 需要的全部入口（`AXIsProcessTrustedWithOptions`、`CGPreflightScreenCaptureAccess`、`CGRequestScreenCaptureAccess`、`IOHIDCheckAccess`、`IOHIDRequestAccess`）本身就是 C 函数，包一层自有 dylib 只会增加构建、签名和双向 ABI 维护成本，不会带来任何隔离收益。
+
+唯一没有 C 入口的是 `AVCaptureDevice` 的麦克风授权，因此 `Native/` 内提供了一个**最小 Objective-C 运行时层**：`objc_getClass` / `sel_registerName` / 按签名逐个声明的 `objc_msgSend`，外加一个符合 libclosure 布局的 global block 用于承接 `requestAccessForMediaType:completionHandler:` 回调。global block 由 libclosure 保证不会被 copy/free，因此静态分配一次、进程生命周期内不释放，管理侧不需要引用计数。
+
+独立编译的原生桥推迟到**首次出现只有 Objective-C/Swift 接口且无法用单条消息发送表达的能力**时再引入，即阶段 9（ScreenCaptureKit 采集）和阶段 12（ScreenCaptureKit 音频）。届时需要重新评估是否值得引入 Xcode 构建步骤。
+
+实际目录（与 3.1 的差异）：`Audio/`、`Capture/`、`Hotkeys/`、`ImageTranslation/`、`Input/`、`Ocr/`、`Workers/` 仍未创建，因为还没有对应适配器；按“不建立空目录”的约定留到各自阶段。能力与权限适配器放在程序集根目录，与 `EasyChat.Infrastructure.Windows` 中 `WindowsPlatformCapabilities` 的位置一致。
+
+**门槛结果：部分通过。**
+
+| 门槛 | 结果 |
+| --- | --- |
+| Mac 项目可编译 | 通过。`dotnet build EasyChat.sln -c Debug` 在 macOS 主机上 0 警告 0 错误 |
+| Native bridge 有独立 smoke test | 通过。`tests/EasyChat.Infrastructure.MacOS.Tests/Native/MacSystemPrivacyGatewayTests.cs` 在真机上逐个解析五项权限的原生入口，并单独断言 `AVCaptureDevice` 的类与 selector 真实存在（`objc_msgSend` 对 nil 接收者返回 0，与 `NotDetermined` 同值，必须分开断言），以及 global block 的 isa/flags/descriptor 布局 |
+| 没有原生类型越过 platform assembly | 通过。`Native/` 的返回值只有 `bool`、`nint` 和内部枚举；`IMacPrivacyGateway` 只输出 `MacPrivacyState`；跨 Contracts 的只有 `CapabilityStatus` / `PermissionStatus` |
+| 空 Composition Root 可通过 `--verify-composition` | **未通过，且本阶段无法通过。** 共享 Desktop 的 DI 图要求全部平台端口存在，只注册能力与权限不足以让 `ValidateOnBuild` 成立 |
+
+`--verify-composition` 当前缺失的端口如下，正好构成阶段 5～13 的适配器清单，可作为后续阶段的验收对照：
+
+```text
+EasyChat.Contracts.Platform.IScreenCatalog                     阶段 9
+EasyChat.Contracts.Platform.IGlobalHotkeys                     阶段 7
+EasyChat.Contracts.Platform.IGlobalPointerMonitor              阶段 7
+EasyChat.Contracts.Platform.IPointerPosition                   阶段 7
+EasyChat.Contracts.Platform.ISelectedTextCapture               阶段 6
+EasyChat.Contracts.Platform.IWindowFocus                       阶段 6
+EasyChat.Contracts.Platform.IPcmAudioCapture                   阶段 12
+EasyChat.Contracts.Platform.IAudioPlaybackQueue                阶段 13
+EasyChat.Contracts.Platform.IAudioFeedbackCuePlayer            阶段 13
+EasyChat.Contracts.Ocr.IOcrRecognizer                          阶段 10
+EasyChat.Contracts.Ocr.IOcrModelStore                          阶段 10
+EasyChat.Contracts.ImageTranslation.IImageBackgroundCleaner    阶段 11
+EasyChat.Contracts.ImageTranslation.IImageTranslationModelStore 阶段 11
+EasyChat.Presentation.Features.Capture.IScreenshotCaptureSession 阶段 9
+EasyChat.Presentation.Foundation.Platform.IPlatformWindowBehavior 阶段 5
+```
+
+因此该门槛顺延为**阶段 13 的出口条件**：在最后一个平台端口落地前，`--verify-composition` 不可能成立，把它挂在阶段 3 是原计划的排序错误。
+
 ### 阶段 4：平台能力和权限系统
 
 预计：2～3 人日。
+
+**状态：已完成（2026-09-12）**
 
 #### 实现类
 
@@ -452,9 +497,53 @@ EasyChat.Infrastructure.MacOS/Native/EasyChatMacNative/
 
 覆盖未决定、已授权、已拒绝、授权后需要重启、运行中撤销权限、原生检查异常和 CancellationToken。
 
+#### 实际落地的结构
+
+原计划只列了两个实现类。实际在两者之间加了一个**内部接缝** `IMacPrivacyGateway`，理由是：如果把「检查 → 弹窗 → 重新检查 → 判定」的策略写进直接调 TCC 的类里，上面测试清单中的七种情形在非授权主机上一种都测不了。
+
+- `Native/*`：只做 C ABI 与 Objective-C 消息发送，返回 `bool` / `nint` / 内部枚举。
+- `IMacPrivacyGateway`：唯一的原生接缝，输出 `MacPrivacyState`（`Granted` / `NotDetermined` / `Denied` / `Restricted` / `Unavailable`）。`Check` 绝不弹窗，`PromptAsync` 是唯一允许弹窗的入口。
+- `MacPlatformCapabilities` / `MacPlatformPermissionRequester`：把原始状态映射成 Contracts 三态，并持有「弹窗后必须重新读」这条策略。
+- `MacPrivacyReasons`：把状态翻成用户可执行的说明，包含对应的「系统设置 > 隐私与安全性 > …」面板名与重启提示。
+
+只有一层接口，不构成 façade 链；它是真实边界（真机 TCC 对可脚本化的假实现），符合「只有真实边界才定义接口」的规则。
+
+#### 能力到权限的映射
+
+| 能力 | 所需权限 | 说明 |
+| --- | --- | --- |
+| `ScreenCapture` | `ScreenRecording` | |
+| `SelectedTextCapture` | `Accessibility` | |
+| `TextDelivery` | `Accessibility` | |
+| `WindowActivation` | `Accessibility` | |
+| `GlobalPointerMonitoring` | `InputMonitoring` | |
+| `AudioCaptureSources` | `SystemAudioCapture` | 实为 ScreenCaptureKit 的屏幕录制授权 |
+| `GlobalHotkeys` | 无 | Carbon `RegisterEventHotKey` 不受 TCC 管辖 |
+| `Clipboard` | 无 | `NSPasteboard` 不受 TCC 管辖 |
+| `SpeechRecognition` | 无 | 本地 MicroASR 引擎，麦克风/系统音频授权由 Application 另行按音源请求 |
+| `AudioPlayback` | 无 | 输出设备不受 TCC 管辖 |
+
+四项「无权限」能力返回 `Available` 是事实描述而非兜底：macOS 对它们确实不设隐私门。判断依据是能力是否落在上表的受控集合里，新增枚举值若两边都没登记会落到 `Unsupported`，并由 `EveryCapabilityIsClassifiedByTheMacOsModule` 直接失败。
+
+#### 关于「已点击允许」
+
+`MacPlatformPermissionRequester` **完全忽略** `PromptAsync` 的返回值，弹窗后一律重新 `Check`。因此 `CGRequestScreenCaptureAccess` 返回 `true` 但 TCC 尚未生效时，结果是带重启说明的 `Denied`，而不是 `Granted`。`NotDetermined` 与 `Denied` 都映射到 Contracts 的 `Denied`（契约没有第四态），差异通过 `Reason` 表达；`Restricted`（系统策略禁止，用户无法自行开启）映射到 `Unsupported`，且不弹窗。
+
 #### 阶段门槛
 
 所有 capability 都能正确返回三态，不存在无条件 `Available`。
+
+**门槛结果：通过。** `EasyChat.Infrastructure.MacOS.Tests` 24 项，真机 23 通过 / 1 跳过（「不支持的主机应拒绝回答」按设计只在非 macOS 主机上运行）。覆盖：未决定、已授权、已拒绝、系统策略限制、无隐私入口、弹窗后仍未生效（重启语义）、运行中撤销、原生检查抛异常降级为 `Unsupported` 而不崩溃、查询期取消与弹窗期取消。真机 smoke 测试确认五项权限的原生入口全部解析成功。
+
+Windows 侧未改动，`WindowsPlatformCapabilities` 的无条件 `Available` 保持原样——那是 Windows 的事实，不是 macOS 要照搬的语义。
+
+#### Info.plist 与 entitlements 的实际改动
+
+- `NSMicrophoneUsageDescription`：硬化运行时下缺失会在请求麦克风时直接终止进程。
+- `CFBundleDisplayName`、`LSApplicationCategoryType`。
+- entitlements 增加 `com.apple.security.device.audio-input`，这是硬化运行时允许 `AVCaptureDevice` 请求麦克风的前提。
+
+屏幕录制**没有**对应的 Info.plist 用途字符串键：Apple 未定义这样的键，屏幕录制完全由 TCC 面板和 `CGRequestScreenCaptureAccess` 控制，所以不新增自造键。其余签名、公证相关的 entitlements 留在阶段 15。
 
 ### 阶段 5：macOS Host、应用生命周期和窗口桥
 
