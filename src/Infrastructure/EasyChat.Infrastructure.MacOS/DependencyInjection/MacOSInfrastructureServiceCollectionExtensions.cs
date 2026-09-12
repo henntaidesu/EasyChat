@@ -1,5 +1,6 @@
 using EasyChat.Contracts.Platform;
 using EasyChat.Infrastructure.MacOS.ApplicationStartup;
+using EasyChat.Infrastructure.MacOS.Capture;
 using EasyChat.Infrastructure.MacOS.Input;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -34,6 +35,8 @@ public static class MacOSInfrastructureServiceCollectionExtensions
         services.AddSingleton<IGlobalHotkeys>(provider => provider.GetRequiredService<MacGlobalHotkeys>());
         services.AddSingleton<IHoldGlobalHotkeys>(provider => provider.GetRequiredService<MacGlobalHotkeys>());
         services.AddSingleton<IKeyboardState, MacKeyboardState>();
+        services.AddSingleton<IPointerPosition, MacPointerPosition>();
+        services.AddSingleton<IScreenCatalog, MacScreenCatalog>();
         return services;
     }
 }

@@ -815,13 +815,13 @@ Avalonia 只能存在 Host 桥中；原生窗口操作继续放在 Mac Infrastru
 
 **状态：进行中（2026-09-12）**
 
-已完成 `MacGlobalHotkeys` 与 `MacKeyboardState`；`MacPointerPosition` 与 `MacGlobalPointerMonitor` 依赖显示器几何换算（阶段 9），见下。
+已完成 `MacGlobalHotkeys`、`MacKeyboardState` 与 `MacPointerPosition`（后者随阶段 9.1 的 `MacDisplayGeometry` 一并落地）；`MacGlobalPointerMonitor` 仍未实现。
 
 #### 实现
 
 - [x] `MacGlobalHotkeys`
 - [ ] `MacGlobalPointerMonitor`
-- [ ] `MacPointerPosition`
+- [x] `MacPointerPosition`（见阶段 9.1）
 - [x] `MacKeyboardState`
 
 **为什么两个指针端口要等阶段 9**：契约里的 `PhysicalScreenPoint` 是「统一桌面**物理像素**」，而 CoreGraphics 的全局坐标（`CGEventGetLocation`、`CGDisplayBounds`）是**点**（逻辑单位）。两者之间的换算需要每块显示器的 backing scale factor，也就是阶段 9 的 `IScreenCatalog` / `ScreenDescriptor` 要建立的那张表。现在自己搭一套换算等于把阶段 9 的活先做一遍再扔掉，所以指针端口顺延，与 `MacDisplayGeometry` 一起落地。
@@ -911,15 +911,45 @@ Safari、Chrome、TextEdit、Word、VS Code 至少五类应用通过单击、拖
 
 #### 9.1 ScreenCatalog
 
+**状态：已完成（2026-09-12）**
+
 实现 `MacScreenCatalog`：
 
-- 获取所有显示器。
-- 使用稳定 display identifier。
-- 返回物理像素 Bounds。
-- 正确处理主屏之外的负坐标。
-- 使用 backing scale 计算有效 DPI：`Dpi = 96 × backingScaleFactor`。
-- Quartz 左下角坐标必须转换成 Contracts 左上角统一坐标。
-- 不允许 Presentation 处理 macOS 坐标特例。
+- [x] 获取所有显示器。
+- [x] 使用稳定 display identifier。
+- [x] 返回物理像素 Bounds。
+- [x] 正确处理主屏之外的负坐标。
+- [x] 使用 backing scale 计算有效 DPI：`Dpi = 96 × backingScaleFactor`。
+- [x] Quartz 左下角坐标必须转换成 Contracts 左上角统一坐标 —— 见下，实际**不需要翻转**。
+- [x] 不允许 Presentation 处理 macOS 坐标特例。
+
+**坐标翻转是计划里的一个误判。** `CGDisplayBounds` 用的是 global display space，原点在主显示器**左上角**、y 向下增长，正是契约要的方向。左下角原点属于 AppKit 的 `NSScreen`，而本适配器不用它。所以这里没有任何翻转代码——`CGDisplayBounds` 真正需要换算的是**单位**：它给的是点，不是像素。
+
+稳定身份用 `vendor-model-serial-unit` 四元组，因为 `CGDirectDisplayID` 会在重启和重新接线后被重新分配。
+
+**混合 DPI 的诚实说明**：每块显示器的点矩形按**它自己**的 backing factor 缩放。所有显示器同 scale 时这是精确的；scale 不同时，两块屏交界处的像素矩形可能出现缝隙或重叠——因为 macOS 本来就是按点排布显示器的，不存在一张跨屏的统一像素网格。所有操作都先把点定位到所属显示器再在该显示器内换算，因此这个缝隙不会影响任何一次真实截图或指针读数。
+
+#### 9.1.1 实测：Avalonia 12.1.1 在 macOS 上的 Screens 与契约不一致
+
+这是**实测发现，计划此前不知道**，且它决定了 9.2 和阶段 14 怎么做。测量环境：MacBook Pro 内建 Retina 屏，缩放分辨率。
+
+| 来源 | Bounds | Scale |
+| --- | --- | --- |
+| `CGDisplayBounds` + `CGDisplayMode` | `(0,0,1408,881)` 点 / `2816×1762` 像素 | 2.0 |
+| `NSScreen.frame` + `backingScaleFactor` | `(0,0,1408,881)` 点 | **2.0** |
+| **Avalonia `Screen.Bounds` / `Screen.Scaling`** | `(0,0,1408,881)` | **1** |
+| Avalonia `Window.RenderScaling` | — | **2**（正确） |
+
+即：**Avalonia 12.1.1 的 `Screen.Bounds` 是点而不是物理像素，且 `Screen.Scaling` 恒为 1**，尽管它自己渲染时用的 `RenderScaling` 是正确的 2。
+
+这带来一个真实冲突。`CaptureOverlayGeometry.MatchesTopology` 会把 `ScreenDescriptor.Bounds` 当作 `PixelRect` 去和 Avalonia 的 `Screen.Bounds` **逐值比较**，`ScaleX/ScaleY` 和 `Screen.Scaling` 比较：
+
+- 若 `MacScreenCatalog` 报告点（1408×881，scale 1）以迎合 Avalonia：拓扑校验通过，但截图只有 Retina 屏一半的分辨率，OCR 输入质量直接减半，阶段 9 门槛「Retina 截图区域像素对齐」不成立。
+- 若报告真实物理像素（2816×1762，scale 2）：契约正确、截图原生分辨率，但拓扑校验失败，截图覆盖层拒绝启动。
+
+**本次选择后者**，理由是不能为了绕过一个上游 bug 而永久性地把核心功能的输入质量砍半。
+
+**由此产生一个待决问题，需要你拍板**（我没有擅自改共享代码）：`MatchesTopology` 需要改成在**逻辑空间**比较——两边各自 `Bounds / Scale` 之后再比。Windows 侧（描述符像素+scale s，Avalonia 像素+scale s）结果不变，macOS 侧（描述符 2816/2=1408，Avalonia 1408/1=1408）则能对上，且**不需要任何 OS 分支**。这是平台无关的重述，但它动的是共享 Presentation 代码且有 Windows 回归面，所以留给你决定后再做。在此之前 macOS 的截图覆盖层无法通过拓扑校验。
 
 #### 9.2 ScreenCapture
 
