@@ -1099,7 +1099,9 @@ Safari、Chrome、TextEdit、Word、VS Code 至少五类应用通过单击、拖
 
 #### Runtime
 
-ARM64 方案：
+**状态：阻塞。计划中的 runtime 方案经实测不可用（2026-09-12）**
+
+原计划：
 
 - `Sdcb.OpenVINO.runtime.osx.12.6-arm64`。
 - 对应 OpenVINO/PaddleOCR managed binding。
@@ -1107,6 +1109,40 @@ ARM64 方案：
 - 所有 dylib 放入 `.app/Contents/Frameworks`。
 - 修改 rpath 后再签名。
 - worker 和主进程都能解析同一 runtime。
+
+#### 实测结论：现有 OCR 技术栈在 macOS arm64 上缺两块原生件
+
+包本身存在且版本与 Windows 侧一致（`Sdcb.OpenVINO.runtime.osx.12.6-arm64 2026.2.0`，Windows 用 `win-x64 2026.2.0`），还原正常，`OVCore` 也能初始化。但：
+
+**1. 没有任何推理设备插件。** 该包只含核心 runtime（`libopenvino`、`libopenvino_c`）、五个模型前端（IR / ONNX / Paddle / TensorFlow / TF-Lite / PyTorch）以及 TBB、hwloc。**没有 `libopenvino_arm_cpu_plugin.dylib`，也没有 `plugins.xml`。**
+
+实测：
+
+```text
+OpenVINO devices: []
+```
+
+即 OpenVINO 能**解析** PaddleOCR 模型，但无法 `CompileModel`、无法推理。这不是路径或 rpath 问题——文件根本不在包里。
+
+**2. OpenCvSharp 原生库缺失。** `Sdcb.OpenVINO.PaddleOCR` 的预处理依赖 OpenCvSharp，而依赖链只带来托管的 `OpenCvSharp.dll`，没有 `libOpenCvSharpExtern.dylib`：
+
+```text
+OpenCvSharp native FAILED: TypeInitializationException
+```
+
+因此阶段 10 的 Runtime 小节建立在一个**错误前提**上：它假设「已经存在 macOS ARM64 OpenVINO runtime」（这句判断也出现在计划第 1 节的 CPU 架构假设里，是选择 Apple Silicon 首发的理由之一）。实际存在的只是一个**不含推理插件**的核心包。
+
+**连带影响**：计划在「原则」里明确写了「不用 Apple Vision 替换现有 OCR」，理由是那会改变语言范围、模型管理和结果语义。这条禁令的前提是 OpenVINO 路线可行——现在这个前提不成立，因此该决策需要重新做，不能照旧执行。
+
+三条可选路线（成本与代价差异很大，需要决策）：
+
+| 路线 | 保留什么 | 代价 |
+| --- | --- | --- |
+| A. Apple Vision（`VNRecognizeTextRequest`） | 无需模型下载、无原生打包签名负担、Apple Silicon 上速度好 | 语言范围从约 90 种缩到 Vision 支持的约 20 种；模型下载/删除设置页在 macOS 上失去意义；结果语义不同（归一化包围盒，旋转角表达方式不一致） |
+| B. 自行构建 OpenVINO ARM CPU 插件 + OpenCvSharp 原生库 | 模型 ID、语言 ID、下载校验和、结果语义**全部不变** | 需要从源码构建 OpenVINO 与 OpenCV 的 macOS arm64 版本，自行 vendoring、改 rpath、签名公证，并长期维护这套构建 |
+| C. 换用 ONNX Runtime 推理 | 语言范围与结果语义可保留；仓库已依赖 `Microsoft.ML.OnnxRuntime`（MicroASR 在用），macOS arm64 支持完善 | PaddleOCR 模型需转换为 ONNX，**下载目录与校验和必须改**，与计划「下载校验和保持兼容」冲突 |
+
+在这条路线确定之前，阶段 10 不应继续写实现代码。
 
 #### 测试
 
